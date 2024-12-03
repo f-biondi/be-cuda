@@ -57,8 +57,8 @@ int main(void) {
 	checkCUDAError("CUDA memcpy");
 
 	// Launch add() kernel on GPU
-  dim3 nBlocks(ceil((float)N / THREADS_PER_BLOCK), 1, 1);
-  dim3 nThreads(THREADS_PER_BLOCK, 1, 1);
+    dim3 nBlocks(ceil((float)N / THREADS_PER_BLOCK), 1, 1);
+    dim3 nThreads(THREADS_PER_BLOCK, 1, 1);
 	vectorAdd <<< nBlocks, nThreads >>>(d_a, d_b, d_c, N);
 	checkCUDAError("CUDA kernel");
 
