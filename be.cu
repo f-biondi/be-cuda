@@ -31,7 +31,7 @@ void validate(int* c, int* c_ref, int max) {
 							 errors++;
 					}
 		 }
-		 printf("Total errors: %d \n", errors);
+		 printf("Total errars: %d \n", errors);
 }
 
 int main(void) {
