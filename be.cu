@@ -46,7 +46,7 @@ int main(void) {
 
     for(int i=0; i<n_nodes; ++i) {
         for(int k=0; k<n_nodes; ++k) {
-            printf(" %d", matrix[(i*n_nodes)+k]);
+            printf("%d ", matrix[(i*n_nodes)+k]);
         }
         printf("\n");
     }
