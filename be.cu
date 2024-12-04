@@ -11,7 +11,7 @@ void checkCUDAError(const char*);
 void random_ints(int *a);
 void vectorAddCPU(int* a, int* b, int* c, int max);
 void validate(int* c, int* c_ref, int max);
-void index_to_matrix(int *m, int n_nodes, int** edge_index, int l_index);
+void index_to_matrix(int *m, int n_nodes, int[][] edge_index, int l_index);
 
 __global__ void vectorAdd(int *a, int *b, int *c, int max) {
 	int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -111,7 +111,7 @@ void random_ints(int *a)
 	}
 }
 
-void index_to_matrix(int *m, int n_nodes, int** edge_index, int l_index)
+void index_to_matrix(int *m, int n_nodes, int[][] edge_index, int l_index)
 {
     for(int i=0; i< l_index; ++i) {
         m[(edge_index[0][i] * n_nodes) + edge_index[1][i]] = 1;
