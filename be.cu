@@ -11,7 +11,7 @@ void checkCUDAError(const char*);
 void random_ints(int *a);
 void vectorAddCPU(int* a, int* b, int* c, int max);
 void validate(int* c, int* c_ref, int max);
-void index_to_matrix(int *m, int n_nodes, int[][] edge_index, int l_index);
+void index_to_matrix(int *m, int n_nodes);
 
 __global__ void vectorAdd(int *a, int *b, int *c, int max) {
 	int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -40,13 +40,10 @@ int main(void) {
 	int *d_a, *d_b, *d_c;			// device copies of a, b, c
 	unsigned int size = N * sizeof(int);
 
-    int edge_index[2][20] = {
-        {0,1,2,3,0,0,1,4,1,5,1,6,2,7,2,8,3,9,3,10},
-        {1,0,0,0,2,3,4,1,5,1,6,1,7,2,8,2,9,3,10,3}
-    };
     int n_nodes = 11;
     int *matrix = (int *)malloc(n_nodes * n_nodes * sizeof(int));
-    index_to_matrix(matrix, n_nodes, edge_index, 20);
+    index_to_matrix(matrix, n_nodes);
+
     for(int i=0; i<n_nodes; ++i) {
         for(int k=0; k<n_nodes; ++k) {
             printf(" %d", matrix[(i*n_nodes)+k]);
@@ -111,8 +108,14 @@ void random_ints(int *a)
 	}
 }
 
-void index_to_matrix(int *m, int n_nodes, int[][] edge_index, int l_index)
+void index_to_matrix(int *m, int n_nodes)
 {
+    int edge_index[2][20] = {
+        {0,1,2,3,0,0,1,4,1,5,1,6,2,7,2,8,3,9,3,10},
+        {1,0,0,0,2,3,4,1,5,1,6,1,7,2,8,2,9,3,10,3}
+    };
+    int l_index = 20;
+
     for(int i=0; i< l_index; ++i) {
         m[(edge_index[0][i] * n_nodes) + edge_index[1][i]] = 1;
         m[(edge_index[1][i] * n_nodes) + edge_index[0][i]] = 1;
