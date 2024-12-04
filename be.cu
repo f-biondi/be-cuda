@@ -44,7 +44,7 @@ int main(void) {
     int *matrix = (int *)malloc(n_nodes * n_nodes * sizeof(int));
     index_to_matrix(matrix, n_nodes);
 
-    for(int i=0; i<n_nodes; ++i) {
+    for(int i=0; i < n_nodes; ++i) {
         for(int k=0; k<n_nodes; ++k) {
             printf("%d ", matrix[(i*n_nodes)+k]);
         }
