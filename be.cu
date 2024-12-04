@@ -45,7 +45,7 @@ int main(void) {
         {1,0,0,0,2,3,4,1,5,1,6,1,7,2,8,2,9,3,10,3}
     };
     int n_nodes = 11;
-    int *matrix = (int *)malloc(n_nodes * n_nodes * sizeof(int))
+    int *matrix = (int *)malloc(n_nodes * n_nodes * sizeof(int));
     index_to_matrix(matrix, n_nodes, edge_index, 20);
     for(int i=0; i<n_nodes; ++i) {
         for(int k=0; k<n_nodes; ++k) {
