@@ -49,7 +49,7 @@ int main(void) {
     index_to_matrix(matrix, n_nodes, edge_index, 20);
     for(int i=0; i<n_nodes; ++i) {
         for(int k=0; k<n_nodes; ++k) {
-            printf(" %d", matrix[i][k]);
+            printf(" %d", matrix[(i*n_nodes)+k]);
         }
         printf("\n");
     }
