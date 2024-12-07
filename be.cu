@@ -6,7 +6,7 @@
 
 #define N 11
 
-void checkCUDAError(const char* msg);
+void checkCUDAError(const char*);
 void getMatrix(int* m, int n_nodes);
 
 int main(void) {
@@ -31,7 +31,7 @@ int main(void) {
 	return 0;
 }
 
-void checkCudaError(const char* msg)
+void checkCUDAError(const char *msg)
 {
 	cudaError_t err = cudaGetLastError();
 	if (cudaSuccess != err)
