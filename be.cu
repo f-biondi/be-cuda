@@ -10,8 +10,8 @@ void checkCUDAError(const char*);
 void getMatrix(int* m, int n_nodes);
 
 int main(void) {
-	int *matrix;			                          // host copies
-	int *d_matrix, *d_nodes, d_weights;			      // device copies
+	int *matrix;			                   
+	int *d_matrix, *d_nodes, *d_weights;
 	unsigned int matrixSize = N * N * sizeof(int);
 	unsigned int nodeSize = N * sizeof(int);
 
