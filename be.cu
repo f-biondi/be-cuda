@@ -31,7 +31,7 @@ int main(void) {
 	return 0;
 }
 
-void checkCudaError(const char*)
+void checkCudaError(const char* msg)
 {
 	cudaError_t err = cudaGetLastError();
 	if (cudaSuccess != err)
