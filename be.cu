@@ -6,7 +6,7 @@
 
 #define N 11
 
-void checkCUDAError(const char* msg)
+void checkCUDAError(const char* msg);
 void getMatrix(int* m, int n_nodes);
 
 int main(void) {
@@ -23,7 +23,7 @@ int main(void) {
 	cudaMalloc((void **)&d_weights, nodeSize);
 	checkCUDAError("CUDA malloc");
 
-	cudaMemcpy(d_matrix, matrix, size, cudaMemcpyHostToDevice);
+	cudaMemcpy(d_matrix, matrix, matrixSize, cudaMemcpyHostToDevice);
 	checkCUDAError("CUDA memcpy");
 
 
@@ -31,7 +31,7 @@ int main(void) {
 	return 0;
 }
 
-void checkCudaError(const char*);
+void checkCudaError(const char*)
 {
 	cudaError_t err = cudaGetLastError();
 	if (cudaSuccess != err)
