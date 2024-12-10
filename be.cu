@@ -37,7 +37,7 @@ int main(void) {
 	cudaMemcpy(d_index_b, edge_index[1], edgeSize, cudaMemcpyHostToDevice);
 	checkCUDAError("CUDA memcpy");
 
-	test_kernel<<<(EDGES+255)/256, 256>>>(d_index_a, d_index_b, d_weights);
+	compute_weights<<<(EDGES+255)/256, 256>>>(d_index_a, d_index_b, d_weights);
 	checkCUDAError("Kernel start");
 
 	cudaMemcpy(weights, d_weights, nodeSize, cudaMemcpyDeviceToHost);
