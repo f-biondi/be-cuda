@@ -12,7 +12,7 @@ void checkCUDAError(const char*);
 __global__ void compute_weights(int *d_index_a, int *d_index_b, int *d_weights) {
 	int i = blockIdx.x * blockDim.x + threadIdx.x;
     if(i < EDGES) {
-        atomicAdd(&d_index_b[i], 1);
+        atomicAdd(&d_weights[d_index_b[i]], 1);
     }
 }
 
