@@ -35,6 +35,7 @@ int main(void) {
 	cudaMemcpy(d_index_a, edge_index[0], edgeSize, cudaMemcpyHostToDevice);
 	cudaMemcpy(d_index_b, edge_index[1], edgeSize, cudaMemcpyHostToDevice);
 	checkCUDAError("CUDA memcpy");
+    printf("AAAAA");
 
 	test_kernel <<< 1, EDGES >>>(d_index_a, d_index_b);
 	return 0;
