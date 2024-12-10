@@ -31,7 +31,7 @@ int main(void) {
 
 	weights = (int *)malloc(nodeSize);
 	current_splitter_index = (int *)malloc(sizeof(int));
-    *current_splitter_index = 1;
+    *current_splitter_index = 0;
 
 	cudaMalloc((void **)&d_edge_start, edgeSize);
 	cudaMalloc((void **)&d_edge_end, edgeSize);
@@ -47,20 +47,22 @@ int main(void) {
 	checkCUDAError("CUDA memcpy");
 
 
-    cudaMemcpy(current_splitter_index, d_current_splitter_index, sizeof(int), cudaMemcpyDeviceToHost);
-	checkCUDAError("CUDA memcpy");
-    current_splitter_index--;
-    cudaMemcpy(d_current_splitter_index, current_splitter_index, sizeof(int), cudaMemcpyHostToDevice);
+    while(current_splitter_index >= 0) {
+        cudaMemcpy(current_splitter_index, d_current_splitter_index, sizeof(int), cudaMemcpyDeviceToHost);
+        checkCUDAError("CUDA memcpy");
+        current_splitter_index--;
+        cudaMemcpy(d_current_splitter_index, current_splitter_index, sizeof(int), cudaMemcpyHostToDevice);
 
 
-	compute_weights<<<(EDGES+255)/256, 256>>>(d_edge_start, d_edge_end, d_weights, d_node_blocks, d_splitters, d_current_splitter_index);
-	checkCUDAError("Compute Weights");
+        compute_weights<<<(EDGES+255)/256, 256>>>(d_edge_start, d_edge_end, d_weights, d_node_blocks, d_splitters, d_current_splitter_index);
+        checkCUDAError("Compute Weights");
 
-	cudaMemcpy(weights, d_weights, nodeSize, cudaMemcpyDeviceToHost);
-	checkCUDAError("CUDA memcpy");
+        cudaMemcpy(weights, d_weights, nodeSize, cudaMemcpyDeviceToHost);
+        checkCUDAError("CUDA memcpy");
 
-    for (int i =0; i< N; ++i){
-        printf("%d \n", weights[i]);
+        for (int i =0; i< N; ++i){
+            printf("%d \n", weights[i]);
+        }
     }
 
 	return 0;
