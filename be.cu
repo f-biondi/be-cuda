@@ -50,7 +50,7 @@ int main(void) {
     do {
         cudaMemcpy(current_splitter_index, d_current_splitter_index, sizeof(int), cudaMemcpyDeviceToHost);
         checkCUDAError("CUDA memcpy");
-        *current_splitter_index--;
+        *current_splitter_index = (*current_splitter_index) - 1;
         printf("%d\n", *current_splitter_index);
         cudaMemcpy(d_current_splitter_index, current_splitter_index, sizeof(int), cudaMemcpyHostToDevice);
 
