@@ -51,6 +51,7 @@ int main(void) {
         cudaMemcpy(current_splitter_index, d_current_splitter_index, sizeof(int), cudaMemcpyDeviceToHost);
         checkCUDAError("CUDA memcpy");
         *current_splitter_index--;
+        printf("%d\n", *current_splitter_index);
         cudaMemcpy(d_current_splitter_index, current_splitter_index, sizeof(int), cudaMemcpyHostToDevice);
 
 
@@ -60,9 +61,9 @@ int main(void) {
         cudaMemcpy(weights, d_weights, nodeSize, cudaMemcpyDeviceToHost);
         checkCUDAError("CUDA memcpy");
 
-        for (int i =0; i< N; ++i){
+        /*for (int i =0; i< N; ++i){
             printf("%d \n", weights[i]);
-        }
+        }*/
     } while(*current_splitter_index >= 0);
 
 	return 0;
