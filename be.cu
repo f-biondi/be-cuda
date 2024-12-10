@@ -12,7 +12,6 @@ void getMatrix(int* m, int n_nodes);
 
 __global__ void test_kernel(long int *d_index_a, long int *d_index_b) {
 	int i = blockIdx.x * blockDim.x + threadIdx.x;
-    printf("ennamno");
     if(i < EDGES)
         //printf("%d -> %d", d_index_a[i], d_index_b[i]);
         printf("%d", i);
@@ -38,6 +37,7 @@ int main(void) {
 	checkCUDAError("CUDA memcpy");
 
 	test_kernel <<< 1, EDGES >>>(d_index_a, d_index_b);
+	checkCUDAError("Kernel start");
 	return 0;
 }
 
