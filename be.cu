@@ -49,9 +49,9 @@ int main(void) {
 
     do {
         cudaMemcpy(current_splitter_index, d_current_splitter_index, sizeof(int), cudaMemcpyDeviceToHost);
-        checkCUDAError("CUDA memcpy");
         *current_splitter_index = (*current_splitter_index) - 1;
         cudaMemcpy(d_current_splitter_index, current_splitter_index, sizeof(int), cudaMemcpyHostToDevice);
+        checkCUDAError("CUDA memcpy");
 
 
         compute_weights<<<(EDGES+255)/256, 256>>>(d_edge_start, d_edge_end, d_weights, d_node_blocks, d_splitters, d_current_splitter_index);
