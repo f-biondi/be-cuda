@@ -47,7 +47,7 @@ int main(void) {
 	checkCUDAError("CUDA memcpy");
 
 
-    while(current_splitter_index >= 0) {
+    while(*current_splitter_index >= 0) {
         cudaMemcpy(current_splitter_index, d_current_splitter_index, sizeof(int), cudaMemcpyDeviceToHost);
         checkCUDAError("CUDA memcpy");
         current_splitter_index--;
