@@ -24,13 +24,15 @@ int main(void) {
         {0,1,2,3,0,0,1,4,1,5,1,6,2,7,2,8,3,9,3,10},
         {1,0,0,0,2,3,4,1,5,1,6,1,7,2,8,2,9,3,10,3}
     };
-    int* weights;
-    int current_splitter_index = 1;
+    int *weights, *current_splitter_index;
 	int *d_edge_start, *d_edge_end, *d_node_blocks, *d_weights, *d_splitters, *d_current_splitter_index;
 	unsigned int nodeSize = N * sizeof(int);
 	unsigned int edgeSize = EDGES * sizeof(int);
 
 	weights = (int *)malloc(nodeSize);
+	current_splitter_index = (int *)malloc(sizeof(int));
+    *current_splitter_index = 1;
+
 	cudaMalloc((void **)&d_edge_start, edgeSize);
 	cudaMalloc((void **)&d_edge_end, edgeSize);
 	cudaMalloc((void **)&d_node_blocks, nodeSize);
@@ -51,7 +53,7 @@ int main(void) {
     cudaMemcpy(d_current_splitter_index, current_splitter_index, sizeof(int), cudaMemcpyHostToDevice);
 
 
-	compute_weights<<<(EDGES+255)/256, 256>>>(d_index_a, d_index_b, d_weights, d_splitters, d_current_splitter_index);
+	compute_weights<<<(EDGES+255)/256, 256>>>(edge_start, edge_end, d_weights, d_node_blocks, d_splitters, d_current_splitter_index);
 	checkCUDAError("Compute Weights");
 
 	cudaMemcpy(weights, d_weights, nodeSize, cudaMemcpyDeviceToHost);
