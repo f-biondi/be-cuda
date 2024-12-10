@@ -9,13 +9,22 @@
 
 void checkCUDAError(const char*);
 
-__global__ void compute_weights(int *edge_start, int *edge_end, int *weights, int *node_blocks, int *splitters, int *current_splitter_index) {
+__global__ void compute_weights (
+    int *edge_start,
+    int *edge_end,
+    int *weights,
+    int *node_blocks,
+    int *splitters,
+    int *splitters_mask,
+    int *current_splitter_index
+) {
 	int i = blockIdx.x * blockDim.x + threadIdx.x;
     if(i < EDGES) {
         atomicAdd(
             &weights[edge_end[i]],
             node_blocks[edge_start[i]] == splitters[*current_splitter_index]
         );
+        splitters_mask[splitters[*current_splitter_index]] = 0;
     }
 }
 
