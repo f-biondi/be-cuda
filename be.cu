@@ -10,6 +10,12 @@
 void checkCUDAError(const char*);
 void getMatrix(int* m, int n_nodes);
 
+__global__ void test_kernel(long int *d_index_a, *d_index_b) {
+	int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if(i < EDGES)
+        printf("%d -> %d", d_index_a[i], d_index_b[i]);
+}
+
 int main(void) {
     long int edge_index[2][20] = {
         {0,1,2,3,0,0,1,4,1,5,1,6,2,7,2,8,3,9,3,10},
@@ -29,6 +35,7 @@ int main(void) {
 	cudaMemcpy(d_index_b, edge_index[1], edgeSize, cudaMemcpyHostToDevice);
 	checkCUDAError("CUDA memcpy");
 
+	test_kernel <<< 1, EDGES >>>(d_index_a, d_index_b);
 	return 0;
 }
 
