@@ -8,25 +8,25 @@
 #define EDGES 20
 
 void checkCUDAError(const char*);
-void getMatrix(int* m, int n_nodes);
 
-__global__ void test_kernel(long int *d_index_a, long int *d_index_b) {
+__global__ void compute_weights(int *d_index_a, int *d_index_b, int *d_weights) {
 	int i = blockIdx.x * blockDim.x + threadIdx.x;
-    printf("aoooo");
-    if(i < EDGES)
-        //printf("%d -> %d", d_index_a[i], d_index_b[i]);
-        printf("%d", i);
+    if(i < EDGES) {
+        atomicAdd(&d_index_b[i], 1);
+    }
 }
 
 int main(void) {
-    long int edge_index[2][20] = {
+    int edge_index[2][20] = {
         {0,1,2,3,0,0,1,4,1,5,1,6,2,7,2,8,3,9,3,10},
         {1,0,0,0,2,3,4,1,5,1,6,1,7,2,8,2,9,3,10,3}
     };
-	long int *d_index_a, *d_index_b, *d_nodes, *d_weights;
-	unsigned int nodeSize = N * sizeof(long int);
-	unsigned int edgeSize = EDGES * sizeof(long int);
+    int* weights;
+	int *d_index_a, *d_index_b, *d_nodes, *d_weights;
+	unsigned int nodeSize = N * sizeof(int);
+	unsigned int edgeSize = EDGES * sizeof(int);
 
+	weights = (int *)malloc(nodeSize);
 	cudaMalloc((void **)&d_index_a, edgeSize);
 	cudaMalloc((void **)&d_index_b, edgeSize);
 	cudaMalloc((void **)&d_nodes, nodeSize);
@@ -37,8 +37,15 @@ int main(void) {
 	cudaMemcpy(d_index_b, edge_index[1], edgeSize, cudaMemcpyHostToDevice);
 	checkCUDAError("CUDA memcpy");
 
-	test_kernel<<<(EDGES+255)/256, 256>>>(d_index_a, d_index_b);
+	test_kernel<<<(EDGES+255)/256, 256>>>(d_index_a, d_index_b, d_weights);
 	checkCUDAError("Kernel start");
+
+	cudaMemcpy(weights, d_weights, nodeSize, cudaMemcpyDeviceToHost);
+	checkCUDAError("CUDA memcpy");
+
+    for (int i =0; i< N; ++i){
+        printf("%d \n", weights[i]);
+    }
 	return 0;
 }
 
