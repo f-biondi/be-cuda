@@ -3,12 +3,15 @@
 #include <math.h>
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
+#include <chrono>
 
 #define THREAD_N 256
 
 void checkCUDAError(const char*);
 int* read_file_graph(int* edge_n, int* node_n);
 int read_file_int(FILE *file);
+void skip_lines(FILE *file, int n);
+void skip_chars(FILE *file, int n);
 
 __global__ void compute_weights(int *edge_start, int *edge_end, int *edge_n, int *weights, int *node_blocks, int *splitters, int *splitters_mask, int *current_splitter_index) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -120,6 +123,7 @@ int main(void) {
     checkCUDAError("CUDA memcpy 1");
 
 
+    std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
     while((*current_splitter_index) >= 0) {
         compute_weights<<<(edge_n+(THREAD_N-1)) / THREAD_N, THREAD_N>>>(
                 d_edge_start,
@@ -166,6 +170,9 @@ int main(void) {
         d_new_node_blocks = d_swap;
     }
     cudaDeviceSynchronize();
+    std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+    int time = std::chrono::duration_cast<std::chrono::seconds>(end - start).count();
+    printf("%d\n",time);
 
     int *result = (int*)malloc(node_n * sizeof(int));
     cudaMemcpy(result, d_node_blocks, node_size, cudaMemcpyDeviceToHost);
@@ -182,26 +189,58 @@ int main(void) {
 
 int* read_file_graph(int* edge_n, int* node_n) {
     FILE *file = fopen("graph.txt", "r");
+    skip_lines(file, 2);
+    skip_chars(file, 9);
     *node_n = read_file_int(file);
+    skip_chars(file, 7);
     *edge_n = read_file_int(file);
-    int *edge_index = (int*)malloc(sizeof(int) * (*edge_n) * (*edge_n));
+    int *edge_index = (int*)malloc(sizeof(int) * (*edge_n) * 2);
+    skip_lines(file,1);
     for(int i=0; i<(*edge_n); ++i) {
         edge_index[i] = read_file_int(file); 
         edge_index[(*edge_n) + i] = read_file_int(file); 
     }
+    fclose(file);
     return edge_index;
 }
 
-int read_file_int(FILE *file) {
-    char ch = fgetc(file);
+ int read_file_int(FILE *file) {
+    int ch = fgetc(file);
     int n = 0;
     int c = 0;
-    while(ch != ' ' && ch != '\n') {
+    while(ch != EOF && ch != '\t' && ch != ' '  && ch != '\n' && ch !='\r') {
         c = ch - '0';   
         n = (n*10) + c;
         ch = fgetc(file);
     }
+    if (ch == '\r') {
+        skip_lines(file, 1);
+    }
     return n;
+}
+
+void skip_lines(FILE *file, int n) {
+    int counter = 0;
+    char ch = fgetc(file);
+    while(ch != EOF) {
+        if(ch == '\n') {
+            counter++;
+            if(counter == n) {
+                break;
+            }
+        }
+        ch = fgetc(file);
+    }
+}
+
+void skip_chars(FILE *file, int n) {
+    int counter = 0;
+    char ch = fgetc(file);
+    counter++;
+    while(ch != EOF && counter < n) {
+        ch = fgetc(file);
+        counter++;
+    }
 }
 
 void checkCUDAError(const char *msg)
