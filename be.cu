@@ -16,11 +16,11 @@ void skip_chars(FILE *file, int n);
 __global__ void compute_weights(int *edge_start, int *edge_end, int *edge_n, int *weights, int *node_blocks, int *splitters, int *splitters_mask, int *current_splitter_index) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if(i < (*edge_n)) {
-        int es = edge_end[i];
+        int es = edge_start[i];
         int block = node_blocks[es];
         int splitter = splitters[*current_splitter_index];
         atomicAdd(
-            &weights[edge_start[i]],
+            &weights[edge_end[i]],
             block == splitter
         );
         splitters_mask[splitters[*current_splitter_index]] = 0;
