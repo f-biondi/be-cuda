@@ -184,7 +184,8 @@ int* read_file_graph(int* edge_n, int* node_n) {
     FILE *file = fopen("graph.txt", "r");
     *node_n = read_file_int(file);
     *edge_n = read_file_int(file);
-    int *edge_index = (int*)malloc(sizeof(int) * (*edge_n) * 2);
+    long int index_size = ((long int)(*edge_n)) * 2;
+    int *edge_index = (int*)malloc(sizeof(int) * index_size);
     for(int i=0; i<(*edge_n); ++i) {
         edge_index[i] = read_file_int(file); 
         edge_index[(*edge_n) + i] = read_file_int(file); 
