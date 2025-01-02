@@ -1,8 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <math.h>
-#include "cuda_runtime.h"
-#include "device_launch_parameters.h"
+#include <cuda.h>
 #include <chrono>
 
 #define THREAD_N 256
@@ -83,7 +82,7 @@ int main(void) {
     int* connections_n = (int*)calloc(node_n, sizeof(int));
     int* connections_sum = (int*)calloc(node_n, sizeof(int));
     int* connections = compute_connections(edge_index, edge_n, node_n, &max_node_w, connections_n, connections_sum);
-    int* current_splitter_index = (int *)calloc(1, sizeof(int));
+    int current_splitter_index = 0;
 
     int *d_node_n, *d_new_node_blocks, *d_node_blocks, *d_current_splitter_index, *d_max_node_w,
         *d_weights, *d_splitters, *d_splitters_mask, *d_weight_adv, *d_connections, *d_connections_n,
@@ -118,7 +117,7 @@ int main(void) {
     cudaMemcpy(d_max_node_w, &max_node_w, sizeof(int), cudaMemcpyHostToDevice);
     checkCUDAError("CUDA memcpy 1");
 
-    while((*current_splitter_index) >= 0) {
+    while(current_splitter_index >= 0) {
         compute_weights<<<(node_n+(THREAD_N-1)) / THREAD_N, THREAD_N>>>(
                 d_connections,
                 d_connections_n,
@@ -142,10 +141,10 @@ int main(void) {
         checkCUDAError("Add splitters");
 
     	cudaDeviceSynchronize();
-        cudaMemcpy(current_splitter_index, d_current_splitter_index, sizeof(int), cudaMemcpyDeviceToHost);
+        cudaMemcpy(&current_splitter_index, d_current_splitter_index, sizeof(int), cudaMemcpyDeviceToHost);
         checkCUDAError("CUDA memcpy 3");
-        *current_splitter_index = (*current_splitter_index) - 1;
-        cudaMemcpy(d_current_splitter_index, current_splitter_index, sizeof(int), cudaMemcpyHostToDevice);
+        current_splitter_index = current_splitter_index - 1;
+        cudaMemcpy(d_current_splitter_index, &current_splitter_index, sizeof(int), cudaMemcpyHostToDevice);
         checkCUDAError("CUDA memcpy 4");
 
         d_swap = d_node_blocks;
