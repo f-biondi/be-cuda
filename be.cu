@@ -118,8 +118,6 @@ int main(void) {
     cudaMemcpy(d_max_node_w, &max_node_w, sizeof(int), cudaMemcpyHostToDevice);
     checkCUDAError("CUDA memcpy 1");
 
-    printf("Data Loaded\n");
-
     while((*current_splitter_index) >= 0) {
         compute_weights<<<(node_n+(THREAD_N-1)) / THREAD_N, THREAD_N>>>(
                 d_connections,
