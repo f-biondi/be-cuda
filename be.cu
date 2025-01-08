@@ -19,13 +19,16 @@ __global__ void compute_weights(int *connections, int *connections_n, int *conne
         int node_connection_sum = connections_sum[i];
         int csi = *current_splitter_index;
         int splitter = splitters[csi];
+        int weight = 0;
         for(int k=0; k < node_connection_n; ++k) {
-            weights[i] += (node_blocks[connections[node_connection_sum + k]] == splitter);
+            int connection = connections[node_connection_sum + k];
+            int connection_block = node_blocks[connection];
+            weight += (connection_block == splitter);
         }
+        weights[i] = weight;
         splitters_mask[splitter] = 0;
     }
 }
-
 
 __global__ void block_ballot(int *node_blocks, int *max_node_w, int *weights, int *weight_adv, int *node_n) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -140,10 +143,9 @@ int main(void) {
         add_splitters<<<(node_n+(THREAD_N-1)) / THREAD_N, THREAD_N>>>(d_new_node_blocks, d_node_blocks, d_splitters, d_current_splitter_index, d_splitters_mask, d_node_n);
         checkCUDAError("Add splitters");
 
-    	cudaDeviceSynchronize();
         cudaMemcpy(&current_splitter_index, d_current_splitter_index, sizeof(int), cudaMemcpyDeviceToHost);
         checkCUDAError("CUDA memcpy 3");
-        current_splitter_index = current_splitter_index - 1;
+        current_splitter_index--;
         cudaMemcpy(d_current_splitter_index, &current_splitter_index, sizeof(int), cudaMemcpyHostToDevice);
         checkCUDAError("CUDA memcpy 4");
 
@@ -151,7 +153,7 @@ int main(void) {
         d_node_blocks = d_new_node_blocks;
         d_new_node_blocks = d_swap;
     }
-    cudaDeviceSynchronize();
+    //cudaDeviceSynchronize(); -- Device already synchronized on cudaMemcpy
 
     int *result = (int*)malloc(node_n * sizeof(int));
     cudaMemcpy(result, d_node_blocks, node_size, cudaMemcpyDeviceToHost);
