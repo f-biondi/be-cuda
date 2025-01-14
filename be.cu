@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <math.h>
+#include <cuda_fp16.h>
 #include <cuda.h>
 #include <cusparse.h>         
 
@@ -29,9 +30,9 @@
 void checkCUDAError(const char*);
 int* read_file_graph(int* edge_n, int* node_n, int* max_node_w);
 int read_file_int(FILE *file);
-float* gen_ones(int n);
+__half* gen_ones(int n);
 
-__global__ void compute_weight_mask(int *node_n, float *weight_mask, int *node_blocks, int *splitters, int *splitters_mask, int *current_splitter_index) {
+__global__ void compute_weight_mask(int *node_n, __half *weight_mask, int *node_blocks, int *splitters, int *splitters_mask, int *current_splitter_index) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     int node_number = (*node_n);
     if(i < node_number) {
@@ -43,12 +44,12 @@ __global__ void compute_weight_mask(int *node_n, float *weight_mask, int *node_b
     }
 }
 
-__global__ void block_ballot(int* node_blocks, int* max_node_w, float* weights, int* weight_adv, int* node_n) {
+__global__ void block_ballot(int* node_blocks, int* max_node_w, __half* weights, int* weight_adv, int* node_n) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if(i < (*node_n)) {
         int weight = (int)weights[i];
         int leader = node_blocks[i];
-        if(i == leader || weight != weights[leader]) {
+        if(i == leader || weight != ((int)weights[leader])) {
             int max_w = (*max_node_w);
             long int adv_index = ((long int)max_w) * ((long int)leader) + ((long int)weight);
             weight_adv[adv_index] = i;
@@ -56,7 +57,7 @@ __global__ void block_ballot(int* node_blocks, int* max_node_w, float* weights, 
     }
 }
 
-__global__ void split(int* new_node_blocks, int* node_blocks, int* max_node_w, float* weights, int* weight_adv, int* node_n) {
+__global__ void split(int* new_node_blocks, int* node_blocks, int* max_node_w, __half* weights, int* weight_adv, int* node_n) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if(i < (*node_n)) {
         int max_w = (*max_node_w);
@@ -93,7 +94,7 @@ int main(void) {
     int edge_n = 0;
     int max_node_w = 0;
     int* edge_index = read_file_graph(&edge_n, &node_n, &max_node_w);
-    float* values = gen_ones(edge_n);
+    __half* values = gen_ones(edge_n);
     const int BLOCK_N = (node_n+(THREAD_N-1)) / THREAD_N;
     size_t node_size = node_n * sizeof(int);
     size_t edge_size = edge_n * sizeof(int);
@@ -103,7 +104,8 @@ int main(void) {
         *d_max_node_w, *d_splitters, *d_splitters_mask, *d_weight_adv, *d_swap,
         *d_values, *d_rows, *d_columns;
 
-    float *d_weights, *d_weight_mask;
+    __half *d_weights;
+    __half *d_weight_mask;
 
     int* rows = (int*)malloc((node_n+1) * sizeof(int));
     int last = 0;
@@ -120,8 +122,8 @@ int main(void) {
     }
     rows[last] = c;
 
-    CHECK_CUDA( cudaMalloc((void **)&d_weights, node_n * sizeof(float)) );
-    CHECK_CUDA( cudaMalloc((void **)&d_weight_mask, node_n * sizeof(float)) );
+    CHECK_CUDA( cudaMalloc((void **)&d_weights, node_n * sizeof(__half)) );
+    CHECK_CUDA( cudaMalloc((void **)&d_weight_mask, node_n * sizeof(__half)) );
     CHECK_CUDA( cudaMalloc((void **)&d_weight_adv, node_size * max_node_w) );
     CHECK_CUDA( cudaMalloc((void **)&d_node_n, sizeof(int)) );
     CHECK_CUDA( cudaMalloc((void **)&d_new_node_blocks, node_size) );
@@ -134,7 +136,7 @@ int main(void) {
     CHECK_CUDA( cudaMalloc((void **)&d_columns, edge_size) );
     CHECK_CUDA( cudaMalloc((void **)&d_values, edge_size) );
 
-    CHECK_CUDA( cudaMemset(d_weights, 0, node_size) );
+    CHECK_CUDA( cudaMemset(d_weights, 0, node_n * sizeof(__half)) );
     CHECK_CUDA( cudaMemset(d_new_node_blocks, 0, node_size) );
     CHECK_CUDA( cudaMemset(d_node_blocks, 0, node_size) );
     CHECK_CUDA( cudaMemset(d_splitters, 0, node_size) );
@@ -159,11 +161,11 @@ int main(void) {
 
     CHECK_CUSPARSE( cusparseCreateCsr(&adj_mat, node_n, node_n, edge_n,
                                   d_rows, d_columns, d_values,  CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
-                                  CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F) )
+                                  CUSPARSE_INDEX_BASE_ZERO, CUDA_R_16F) )
     // Create dense vector X
-    CHECK_CUSPARSE( cusparseCreateDnVec(&vecX, node_n, d_weight_mask, CUDA_R_32F) )
+    CHECK_CUSPARSE( cusparseCreateDnVec(&vecX, node_n, d_weight_mask, CUDA_R_16F) )
     // Create dense vector y
-    CHECK_CUSPARSE( cusparseCreateDnVec(&vecY, node_n, d_weights, CUDA_R_32F) )
+    CHECK_CUSPARSE( cusparseCreateDnVec(&vecY, node_n, d_weights, CUDA_R_16F) )
     // allocate an external buffer if needed
     CHECK_CUSPARSE( cusparseSpMV_bufferSize(
                                  handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
@@ -176,7 +178,7 @@ int main(void) {
         compute_weight_mask<<<BLOCK_N, THREAD_N>>>(d_node_n, d_weight_mask, d_node_blocks, d_splitters, d_splitters_mask, d_current_splitter_index);
         /*CHECK_CUSPARSE( cusparseSpMV_preprocess(
                              handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
-                             &alpha, adj_mat, vecX, &beta, vecY, CUDA_R_32F,
+                             &alpha, adj_mat, vecX, &beta, vecY, CUDA_R_16F,
                              CUSPARSE_SPMV_ALG_DEFAULT, dBuffer) );*/
         CHECK_CUSPARSE( cusparseSpMV(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
                                  &alpha, adj_mat, vecX, &beta, vecY, CUDA_R_32F,
@@ -241,8 +243,8 @@ int read_file_int(FILE *file) {
     return n;
 }
 
-float* gen_ones(int n) {
-    float* values = (float*)malloc(n * sizeof(float));
+__half* gen_ones(int n) {
+    __half* values = (__half*)malloc(n * sizeof(__half));
     for(int i=0; i<n; ++i) values[i] = 1.0;
     return values;
 }
