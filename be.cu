@@ -173,10 +173,7 @@ int main(void) {
                                  CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize) )
     CHECK_CUDA( cudaMalloc(&dBuffer, bufferSize) )
 
-    int its = 0;
-
     while(current_splitter_index >= 0) {
-        its++;
         compute_weight_mask<<<BLOCK_N, THREAD_N>>>(d_node_n, d_weight_mask, d_node_blocks, d_splitters, d_splitters_mask, d_current_splitter_index);
         /*CHECK_CUSPARSE( cusparseSpMV_preprocess(
                              handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
@@ -200,7 +197,6 @@ int main(void) {
         d_node_blocks = d_new_node_blocks;
         d_new_node_blocks = d_swap;
     }
-    printf("%d\n", its);
     //cudaDeviceSynchronize(); -- Device already synchronized on cudaMemcpy
 
     int *result = (int*)malloc(node_size);
