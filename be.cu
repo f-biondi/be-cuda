@@ -117,7 +117,7 @@ int main(int argc, char **argv) {
     size_t edge_size = edge_n * sizeof(int);
     int current_splitter_index = 0;
     //int n_slices = node_n/20;
-    int n_slices = atoi(argv[1]);
+    int n_slices = node_n/20;
     //int n_slices = 3;
     sell_data_t sell_data = gen_sell(edge_index, edge_n, node_n, n_slices);
 
