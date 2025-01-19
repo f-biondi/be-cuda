@@ -3,7 +3,7 @@
 #include <math.h>
 #include <cuda_fp16.h>
 #include <cuda.h>
-#include <cusparse.h>         
+#include <cusparse.h>
 
 #define THREAD_N 256
 
@@ -27,7 +27,22 @@
     }                                                                          \
 }
 
-void checkCUDAError(const char*);
+typedef struct {
+    int node;
+    int n;
+} node_connections_t;
+
+typedef struct {
+    int* slice_offsets;
+    int* column_indices;
+    __half* values;
+    int slice_size;
+    int sell_values_size;
+    node_connections_t* sorted_nodes;
+} sell_data_t;
+
+int nodecmp(const void *p1, const void *p2);
+sell_data_t gen_sell(int* edge_index, int edge_n, int node_n, int n_slices);
 int* read_file_graph(int* edge_n, int* node_n, int* max_node_w);
 int read_file_int(FILE *file);
 __half* gen_ones(int n);
@@ -49,7 +64,7 @@ __global__ void block_ballot(int* node_blocks, int* max_node_w, __half* weights,
     if(i < (*node_n)) {
         int weight = (int)weights[i];
         int leader = node_blocks[i];
-        if(i == leader || weight != ((int)weights[leader])) {
+        if(i != leader && weight != ((int)weights[leader])) {
             int max_w = (*max_node_w);
             long int adv_index = ((long int)max_w) * ((long int)leader) + ((long int)weight);
             weight_adv[adv_index] = i;
@@ -63,8 +78,11 @@ __global__ void split(int* new_node_blocks, int* node_blocks, int* max_node_w, _
         int max_w = (*max_node_w);
         int block = node_blocks[i];
         int weight = (int)weights[i];
-        long int adv_index = ((long int)max_w) * ((long int)block) + ((long int)weight);
-        int new_block = weight_adv[adv_index];
+        int new_block = block;
+        if(weight != ((int)weights[block])) {
+            long int adv_index = ((long int)max_w) * ((long int)block) + ((long int)weight);
+            new_block = weight_adv[adv_index];
+        }
         new_node_blocks[i] = new_block;
         //weights[i] = 0;
     }
@@ -89,39 +107,31 @@ __global__ void add_splitters(int* new_node_blocks, int* node_blocks, int* split
     }
 }
 
-int main(void) {
+int main(int argc, char **argv) {
     int node_n = 0;
     int edge_n = 0;
     int max_node_w = 0;
     int* edge_index = read_file_graph(&edge_n, &node_n, &max_node_w);
-    __half* values = gen_ones(edge_n);
     const int BLOCK_N = (node_n+(THREAD_N-1)) / THREAD_N;
     size_t node_size = node_n * sizeof(int);
     size_t edge_size = edge_n * sizeof(int);
     int current_splitter_index = 0;
+    //int n_slices = node_n/20;
+    int n_slices = atoi(argv[1]);
+    //int n_slices = 3;
+    sell_data_t sell_data = gen_sell(edge_index, edge_n, node_n, n_slices);
 
-    int *d_node_n, *d_new_node_blocks, *d_node_blocks, *d_current_splitter_index, 
+
+
+    int *d_node_n, *d_new_node_blocks, *d_node_blocks, *d_current_splitter_index,
         *d_max_node_w, *d_splitters, *d_splitters_mask, *d_weight_adv, *d_swap,
-        *d_values, *d_rows, *d_columns;
+        *d_slice_offsets, *d_columns;
 
-    __half *d_weights;
-    __half *d_weight_mask;
+    __half *d_weights, *d_weight_mask, *d_values;
 
-    int* rows = (int*)malloc((node_n+1) * sizeof(int));
-    int last = 0;
-    int c = 0;
-    for(c=0; c< edge_n; ++c) {
-        if(!c || edge_index[c] != edge_index[c-1]) {
-            for(int k=edge_index[c-1]; k < (edge_index[c]-1); ++k) {
-                rows[last] = c;
-                ++last;
-            }
-            rows[last] = c;
-            ++last;
-        }
-    }
-    rows[last] = c;
-
+    CHECK_CUDA( cudaMalloc((void **)&d_values, sell_data.sell_values_size * sizeof(__half)) );
+    CHECK_CUDA( cudaMalloc((void **)&d_slice_offsets, (n_slices+1) * sizeof(int)) );
+    CHECK_CUDA( cudaMalloc((void **)&d_columns, sell_data.sell_values_size * sizeof(int)) );
     CHECK_CUDA( cudaMalloc((void **)&d_weights, node_n * sizeof(__half)) );
     CHECK_CUDA( cudaMalloc((void **)&d_weight_mask, node_n * sizeof(__half)) );
     CHECK_CUDA( cudaMalloc((void **)&d_weight_adv, node_size * max_node_w) );
@@ -132,9 +142,6 @@ int main(void) {
     CHECK_CUDA( cudaMalloc((void **)&d_splitters_mask, node_size) );
     CHECK_CUDA( cudaMalloc((void **)&d_current_splitter_index, sizeof(int)) );
     CHECK_CUDA( cudaMalloc((void **)&d_max_node_w, sizeof(int)) );
-    CHECK_CUDA( cudaMalloc((void **)&d_rows, (node_n+1) * sizeof(int)) );
-    CHECK_CUDA( cudaMalloc((void **)&d_columns, edge_size) );
-    CHECK_CUDA( cudaMalloc((void **)&d_values, edge_size) );
 
     CHECK_CUDA( cudaMemset(d_weights, 0, node_n * sizeof(__half)) );
     CHECK_CUDA( cudaMemset(d_new_node_blocks, 0, node_size) );
@@ -145,9 +152,10 @@ int main(void) {
 
     CHECK_CUDA( cudaMemcpy(d_node_n, &node_n, sizeof(int), cudaMemcpyHostToDevice) );
     CHECK_CUDA( cudaMemcpy(d_max_node_w, &max_node_w, sizeof(int), cudaMemcpyHostToDevice) );
-    CHECK_CUDA( cudaMemcpy(d_rows, rows, (node_n+1) * sizeof(int), cudaMemcpyHostToDevice) );
-    CHECK_CUDA( cudaMemcpy(d_columns, edge_index + edge_n, edge_size, cudaMemcpyHostToDevice) );
-    CHECK_CUDA( cudaMemcpy(d_values, values, edge_size, cudaMemcpyHostToDevice) );
+    CHECK_CUDA( cudaMemcpy(d_values, sell_data.values, sell_data.sell_values_size * sizeof(__half), cudaMemcpyHostToDevice) );
+    CHECK_CUDA( cudaMemcpy(d_slice_offsets, sell_data.slice_offsets, (n_slices + 1) * sizeof(int), cudaMemcpyHostToDevice) );
+    CHECK_CUDA( cudaMemcpy(d_columns, sell_data.column_indices, sell_data.sell_values_size * sizeof(int), cudaMemcpyHostToDevice) );
+
 
     cusparseHandle_t handle = NULL;
     cusparseSpMatDescr_t adj_mat;
@@ -159,9 +167,12 @@ int main(void) {
 
     CHECK_CUSPARSE( cusparseCreate(&handle) )
 
-    CHECK_CUSPARSE( cusparseCreateCsr(&adj_mat, node_n, node_n, edge_n,
-                                  d_rows, d_columns, d_values,  CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
-                                  CUSPARSE_INDEX_BASE_ZERO, CUDA_R_16F) )
+    CHECK_CUSPARSE( cusparseCreateSlicedEll(&adj_mat, node_n, node_n, edge_n,
+                                        sell_data.sell_values_size, sell_data.slice_size,
+                                        d_slice_offsets, d_columns, d_values,
+                                        CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
+                                        CUSPARSE_INDEX_BASE_ZERO, CUDA_R_16F) );
+
     // Create dense vector X
     CHECK_CUSPARSE( cusparseCreateDnVec(&vecX, node_n, d_weight_mask, CUDA_R_16F) )
     // Create dense vector y
@@ -198,17 +209,135 @@ int main(void) {
         d_new_node_blocks = d_swap;
     }
     //cudaDeviceSynchronize(); -- Device already synchronized on cudaMemcpy
+    /*for(int i=0; i<node_n; ++i) {
+        printf("%d ", sell_data.sorted_nodes[i].node);
+    }
+    printf("\n");
+
+    for(int i=0; i<(n_slices+1); ++i) {
+        printf("%d ", sell_data.slice_offsets[i]);
+    }
+    printf("\n");
+    for(int i=0; i<sell_data.sell_values_size; ++i) {
+        printf("%d ", sell_data.column_indices[i]);
+    }
+    printf("\n");
+    for(int i=0; i<sell_data.sell_values_size; ++i) {
+        printf("%d ", (int)sell_data.values[i]);
+    }
+    printf("\n");*/
 
     int *result = (int*)malloc(node_size);
     CHECK_CUDA( cudaMemcpy(result, d_node_blocks, node_size, cudaMemcpyDeviceToHost) );
-
-    printf("[%d", result[0]);
+    int *sorted_result = (int*)malloc(node_size);
+    for(int i=0; i<node_n; ++i) {
+        node_connections_t c = sell_data.sorted_nodes[i];
+        sorted_result[c.node] = result[i];
+    }
+    printf("[%d", sorted_result[0]);
     for (int i=1; i<node_n; ++i) {
-        printf(",%d", result[i]);
+        printf(",%d", sorted_result[i]);
     }
     printf("]");
-
     return 0;
+}
+
+int nodecmp(const void *p1, const void *p2) {
+    node_connections_t ip1 = *(node_connections_t*)p1;
+    node_connections_t ip2 = *(node_connections_t*)p2;
+    int r = ip1.n - ip2.n;
+    return r ? r : (ip1.node - ip2.node);
+}
+
+sell_data_t gen_sell(int* edge_index, int edge_n, int node_n, int n_slices) {
+    sell_data_t res;
+    res.slice_size = ceil((float)node_n / n_slices);
+    res.slice_offsets = (int*)calloc(n_slices + 1, sizeof(int));
+    int* node_index_of = (int*)malloc(node_n * sizeof(int));
+    int* connections_n = (int*)calloc(node_n, sizeof(int));
+    int* connections_sum = (int*)malloc(node_n * sizeof(int));
+    int* connections_strided = (int*)malloc(edge_n * sizeof(int));
+    int* connections_cur = (int*)calloc(node_n, sizeof(int));
+    int* padding_sizes = (int*)malloc(n_slices * sizeof(int));
+    res.sorted_nodes = (node_connections_t*)malloc(node_n * sizeof(node_connections_t));
+
+    for(int i =0; i< node_n; ++i) {
+        res.sorted_nodes[i].node = i;
+        res.sorted_nodes[i].n = 0;
+    }
+
+    for(int i=0; i<edge_n; ++i) {
+        int node = edge_index[i];
+        connections_n[node]++;
+        res.sorted_nodes[node].n++;
+    }
+
+    for(int i=0; i<node_n; ++i) {
+        connections_sum[i] = i ? connections_sum[i-1] + connections_n[i-1] : 0;
+    }
+
+    qsort(res.sorted_nodes, node_n, sizeof(node_connections_t), nodecmp);
+    for(int i =0;i<node_n;++i) {
+        node_connections_t c = res.sorted_nodes[i];
+        node_index_of[c.node] = i;
+    }
+
+    for(int i=0; i<edge_n; ++i) {
+        int node = edge_index[i];
+        connections_strided[connections_sum[node] + connections_cur[node]] = edge_index[edge_n + i];
+        connections_cur[node]++;
+    }
+
+    res.sell_values_size = 0;
+    for(int i=0; i<n_slices; ++i) {
+        int max_row_len = 0;
+        for(int k=0; k<res.slice_size; ++k) {
+            int node_index = (i * res.slice_size) + k;
+            int row_len = node_index < node_n ? connections_n[res.sorted_nodes[node_index].node] : 0;
+            max_row_len = max(max_row_len, row_len);
+        }
+        padding_sizes[i] = max_row_len;
+        int slice_len = max_row_len * res.slice_size;
+        res.sell_values_size += slice_len;
+        res.slice_offsets[i+1] = res.slice_offsets[i] + slice_len;
+    }
+
+    res.column_indices = (int*)malloc(res.sell_values_size * sizeof(int));
+    res.values = (__half*)malloc(res.sell_values_size * sizeof(__half));
+    memset(connections_cur, 0, node_n * sizeof(int));
+
+    int values_last = 0;
+    for(int i=0; i<n_slices; ++i) {
+        for(int k=0; k<padding_sizes[i]; ++k) {
+            for(int c=0; c<res.slice_size; ++c) {
+                int node_index = (i * res.slice_size) + c;
+                if(node_index < node_n) {
+                    int node = res.sorted_nodes[node_index].node;
+                    if (connections_cur[node] < connections_n[node]) {
+                        res.column_indices[values_last] = node_index_of[connections_strided[connections_sum[node] + connections_cur[node]]];
+                        res.values[values_last] = 1.0;
+                        connections_cur[node]++;
+                    } else {
+                        res.column_indices[values_last] = -1;
+                        res.values[values_last] = 0.0;
+                    }
+                } else {
+                    res.column_indices[values_last] = -1;
+                    res.values[values_last] = 0.0;
+                }
+                ++values_last;
+            }
+        }
+    }
+
+    free(connections_n);
+    free(connections_sum);
+    free(connections_strided);
+    free(connections_cur);
+    free(padding_sizes);
+    free(node_index_of);
+
+    return res;
 }
 
 int* read_file_graph(int* edge_n, int* node_n, int* max_node_w) {
@@ -219,8 +348,8 @@ int* read_file_graph(int* edge_n, int* node_n, int* max_node_w) {
     size_t index_size = (*edge_n) * 2 * sizeof(int);
     int *edge_index = (int*)malloc(index_size);
     for(int i=0; i<(*edge_n); ++i) {
-        edge_index[i] = read_file_int(file); 
-        edge_index[(*edge_n) + i] = read_file_int(file); 
+        edge_index[i] = read_file_int(file);
+        edge_index[(*edge_n) + i] = read_file_int(file);
         weights[edge_index[i]]++;
         if(weights[edge_index[i]] > *max_node_w) {
             *max_node_w = weights[edge_index[i]];
@@ -235,7 +364,7 @@ int read_file_int(FILE *file) {
     int n = 0;
     int c = 0;
     while(ch != ' ' && ch != '\n') {
-        c = ch - '0';   
+        c = ch - '0';
         n = (n*10) + c;
         ch = fgetc(file);
     }
