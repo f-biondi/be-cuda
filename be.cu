@@ -3,7 +3,7 @@
 #include <math.h>
 #include <cuda_fp16.h>
 #include <cuda.h>
-#include <cusparse.h>
+#include <cusparse.h>         
 
 #define THREAD_N 256
 
@@ -62,11 +62,10 @@ __global__ void compute_weight_mask(int *node_n, __half *weight_mask, int *node_
 __global__ void block_ballot(int* node_blocks, int* max_node_w, __half* weights, int* weight_adv, int* node_n) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if(i < (*node_n)) {
-        int weight = (int)weights[i];
+        int weight = weights[i];
         int leader = node_blocks[i];
         if(i != leader && weight != ((int)weights[leader])) {
-            int max_w = (*max_node_w);
-            long int adv_index = ((long int)max_w) * ((long int)leader) + ((long int)weight);
+            long int adv_index = ((long int)*max_node_w) * leader + weight;
             weight_adv[adv_index] = i;
         }
     }
@@ -75,16 +74,14 @@ __global__ void block_ballot(int* node_blocks, int* max_node_w, __half* weights,
 __global__ void split(int* new_node_blocks, int* node_blocks, int* max_node_w, __half* weights, int* weight_adv, int* node_n) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if(i < (*node_n)) {
-        int max_w = (*max_node_w);
         int block = node_blocks[i];
-        int weight = (int)weights[i];
+        int weight = weights[i];
         int new_block = block;
         if(weight != ((int)weights[block])) {
-            long int adv_index = ((long int)max_w) * ((long int)block) + ((long int)weight);
+            long int adv_index = ((long int)*max_node_w) * block + weight;
             new_block = weight_adv[adv_index];
         }
         new_node_blocks[i] = new_block;
-        //weights[i] = 0;
     }
 }
 
@@ -114,16 +111,13 @@ int main(int argc, char **argv) {
     int* edge_index = read_file_graph(&edge_n, &node_n, &max_node_w);
     const int BLOCK_N = (node_n+(THREAD_N-1)) / THREAD_N;
     size_t node_size = node_n * sizeof(int);
-    size_t edge_size = edge_n * sizeof(int);
     int current_splitter_index = 0;
-    //int n_slices = node_n/20;
     int n_slices = node_n/20;
+    //int n_slices = atoi(argv[1]);
     //int n_slices = 3;
     sell_data_t sell_data = gen_sell(edge_index, edge_n, node_n, n_slices);
 
-
-
-    int *d_node_n, *d_new_node_blocks, *d_node_blocks, *d_current_splitter_index,
+    int *d_node_n, *d_new_node_blocks, *d_node_blocks, *d_current_splitter_index, 
         *d_max_node_w, *d_splitters, *d_splitters_mask, *d_weight_adv, *d_swap,
         *d_slice_offsets, *d_columns;
 
@@ -186,10 +180,10 @@ int main(int argc, char **argv) {
 
     while(current_splitter_index >= 0) {
         compute_weight_mask<<<BLOCK_N, THREAD_N>>>(d_node_n, d_weight_mask, d_node_blocks, d_splitters, d_splitters_mask, d_current_splitter_index);
-        /*CHECK_CUSPARSE( cusparseSpMV_preprocess(
+        CHECK_CUSPARSE( cusparseSpMV_preprocess(
                              handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
-                             &alpha, adj_mat, vecX, &beta, vecY, CUDA_R_16F,
-                             CUSPARSE_SPMV_ALG_DEFAULT, dBuffer) );*/
+                             &alpha, adj_mat, vecX, &beta, vecY, CUDA_R_32F,
+                             CUSPARSE_SPMV_ALG_DEFAULT, dBuffer) );
         CHECK_CUSPARSE( cusparseSpMV(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
                                  &alpha, adj_mat, vecX, &beta, vecY, CUDA_R_32F,
                                  CUSPARSE_SPMV_ALG_DEFAULT, dBuffer) );
@@ -199,7 +193,6 @@ int main(int argc, char **argv) {
         split<<<BLOCK_N, THREAD_N>>>(d_new_node_blocks, d_node_blocks, d_max_node_w, d_weights, d_weight_adv, d_node_n);
 
         add_splitters<<<BLOCK_N, THREAD_N>>>(d_new_node_blocks, d_node_blocks, d_splitters, d_current_splitter_index, d_splitters_mask, d_node_n);
-
         CHECK_CUDA( cudaMemcpy(&current_splitter_index, d_current_splitter_index, sizeof(int), cudaMemcpyDeviceToHost) );
         current_splitter_index--;
         CHECK_CUDA( cudaMemcpy(d_current_splitter_index, &current_splitter_index, sizeof(int), cudaMemcpyHostToDevice) );
@@ -209,34 +202,11 @@ int main(int argc, char **argv) {
         d_new_node_blocks = d_swap;
     }
     //cudaDeviceSynchronize(); -- Device already synchronized on cudaMemcpy
-    /*for(int i=0; i<node_n; ++i) {
-        printf("%d ", sell_data.sorted_nodes[i].node);
-    }
-    printf("\n");
-
-    for(int i=0; i<(n_slices+1); ++i) {
-        printf("%d ", sell_data.slice_offsets[i]);
-    }
-    printf("\n");
-    for(int i=0; i<sell_data.sell_values_size; ++i) {
-        printf("%d ", sell_data.column_indices[i]);
-    }
-    printf("\n");
-    for(int i=0; i<sell_data.sell_values_size; ++i) {
-        printf("%d ", (int)sell_data.values[i]);
-    }
-    printf("\n");*/
-
     int *result = (int*)malloc(node_size);
     CHECK_CUDA( cudaMemcpy(result, d_node_blocks, node_size, cudaMemcpyDeviceToHost) );
-    int *sorted_result = (int*)malloc(node_size);
-    for(int i=0; i<node_n; ++i) {
-        node_connections_t c = sell_data.sorted_nodes[i];
-        sorted_result[c.node] = result[i];
-    }
-    printf("[%d", sorted_result[0]);
+    printf("[%d", result[sell_data.sorted_nodes[0].node]);
     for (int i=1; i<node_n; ++i) {
-        printf(",%d", sorted_result[i]);
+        printf(",%d", result[sell_data.sorted_nodes[i].node]);
     }
     printf("]");
     return 0;
@@ -277,6 +247,7 @@ sell_data_t gen_sell(int* edge_index, int edge_n, int node_n, int n_slices) {
     }
 
     qsort(res.sorted_nodes, node_n, sizeof(node_connections_t), nodecmp);
+
     for(int i =0;i<node_n;++i) {
         node_connections_t c = res.sorted_nodes[i];
         node_index_of[c.node] = i;
@@ -311,7 +282,7 @@ sell_data_t gen_sell(int* edge_index, int edge_n, int node_n, int n_slices) {
         for(int k=0; k<padding_sizes[i]; ++k) {
             for(int c=0; c<res.slice_size; ++c) {
                 int node_index = (i * res.slice_size) + c;
-                if(node_index < node_n) {
+                if(node_index < node_n) { 
                     int node = res.sorted_nodes[node_index].node;
                     if (connections_cur[node] < connections_n[node]) {
                         res.column_indices[values_last] = node_index_of[connections_strided[connections_sum[node] + connections_cur[node]]];
@@ -327,7 +298,7 @@ sell_data_t gen_sell(int* edge_index, int edge_n, int node_n, int n_slices) {
                 }
                 ++values_last;
             }
-        }
+        }    
     }
 
     free(connections_n);
@@ -336,7 +307,7 @@ sell_data_t gen_sell(int* edge_index, int edge_n, int node_n, int n_slices) {
     free(connections_cur);
     free(padding_sizes);
     free(node_index_of);
-
+    
     return res;
 }
 
@@ -348,8 +319,8 @@ int* read_file_graph(int* edge_n, int* node_n, int* max_node_w) {
     size_t index_size = (*edge_n) * 2 * sizeof(int);
     int *edge_index = (int*)malloc(index_size);
     for(int i=0; i<(*edge_n); ++i) {
-        edge_index[i] = read_file_int(file);
-        edge_index[(*edge_n) + i] = read_file_int(file);
+        edge_index[i] = read_file_int(file); 
+        edge_index[(*edge_n) + i] = read_file_int(file); 
         weights[edge_index[i]]++;
         if(weights[edge_index[i]] > *max_node_w) {
             *max_node_w = weights[edge_index[i]];
@@ -364,7 +335,7 @@ int read_file_int(FILE *file) {
     int n = 0;
     int c = 0;
     while(ch != ' ' && ch != '\n') {
-        c = ch - '0';
+        c = ch - '0';   
         n = (n*10) + c;
         ch = fgetc(file);
     }
