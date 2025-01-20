@@ -94,12 +94,12 @@ __global__ void add_splitters(int* new_node_blocks, int* node_blocks, int* split
             int new_splitter_index = atomicAdd(current_splitter_index, 1);
             splitters[new_splitter_index] = i;
             splitters_mask[i] = 1;
-            /*int* splitter_mask_add = &splitters_mask[old_node_block];
+            int* splitter_mask_add = &splitters_mask[old_node_block];
             int old_splitted = atomicExch(splitter_mask_add, 1);
             if(!old_splitted) {
                 new_splitter_index = atomicAdd(current_splitter_index, 1);
                 splitters[new_splitter_index] = old_node_block;
-            }*/
+            }
         }
     }
 }
@@ -177,13 +177,14 @@ int main(int argc, char **argv) {
                                  &alpha, adj_mat, vecX, &beta, vecY, CUDA_R_32F,
                                  CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize) )
     CHECK_CUDA( cudaMalloc(&dBuffer, bufferSize) )
-
+    int its = 0;
     while(current_splitter_index >= 0) {
+        its++;
         compute_weight_mask<<<BLOCK_N, THREAD_N>>>(d_node_n, d_weight_mask, d_node_blocks, d_splitters, d_splitters_mask, d_current_splitter_index);
-        /*CHECK_CUSPARSE( cusparseSpMV_preprocess(
+        CHECK_CUSPARSE( cusparseSpMV_preprocess(
                              handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
                              &alpha, adj_mat, vecX, &beta, vecY, CUDA_R_32F,
-                             CUSPARSE_SPMV_ALG_DEFAULT, dBuffer) );*/
+                             CUSPARSE_SPMV_ALG_DEFAULT, dBuffer) );
         CHECK_CUSPARSE( cusparseSpMV(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
                                  &alpha, adj_mat, vecX, &beta, vecY, CUDA_R_32F,
                                  CUSPARSE_SPMV_ALG_DEFAULT, dBuffer) );
