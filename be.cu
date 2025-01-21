@@ -47,7 +47,7 @@ int* read_file_graph(int* edge_n, int* node_n, int* max_node_w);
 int read_file_int(FILE *file);
 __half* gen_ones(int n);
 
-__global__ void compute_weight_mask(int *node_n, __half *weight_mask, int *node_blocks, int *splitters, int *splitters_mask, int *current_splitter_index) {
+__global__ void compute_weight_mask(int *node_n, __half *weight_mask, int *node_blocks, int *splitters, int *current_splitter_index) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     int node_number = (*node_n);
     if(i < node_number) {
@@ -55,7 +55,6 @@ __global__ void compute_weight_mask(int *node_n, __half *weight_mask, int *node_
         int splitter = splitters[csi];
         int block = node_blocks[i];
         weight_mask[i] = block == splitter ? 1.0 : 0.0;
-        splitters_mask[splitter] = 0;
     }
 }
 
@@ -85,7 +84,7 @@ __global__ void split(int* new_node_blocks, int* node_blocks, int* max_node_w, _
     }
 }
 
-__global__ void add_splitters(int* new_node_blocks, int* node_blocks, int* splitters, int* current_splitter_index, int* splitters_mask, int* node_n) {
+__global__ void add_splitters(int* new_node_blocks, int* node_blocks, int* splitters, int* current_splitter_index, int* node_n) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if(i < (*node_n)) {
         int new_node_block = new_node_blocks[i];
@@ -93,13 +92,6 @@ __global__ void add_splitters(int* new_node_blocks, int* node_blocks, int* split
         if(i == new_node_block && new_node_block != old_node_block) {
             int new_splitter_index = atomicAdd(current_splitter_index, 1);
             splitters[new_splitter_index] = i;
-            splitters_mask[i] = 1;
-            int* splitter_mask_add = &splitters_mask[old_node_block];
-            int old_splitted = atomicExch(splitter_mask_add, 1);
-            if(!old_splitted) {
-                new_splitter_index = atomicAdd(current_splitter_index, 1);
-                splitters[new_splitter_index] = old_node_block;
-            }
         }
     }
 }
@@ -118,8 +110,8 @@ int main(int argc, char **argv) {
     sell_data_t sell_data = gen_sell(edge_index, edge_n, node_n, n_slices);
 
     int *d_node_n, *d_new_node_blocks, *d_node_blocks, *d_current_splitter_index, 
-        *d_max_node_w, *d_splitters, *d_splitters_mask, *d_weight_adv, *d_swap,
-        *d_slice_offsets, *d_columns;
+        *d_max_node_w, *d_splitters, *d_weight_adv, *d_swap, *d_slice_offsets,
+        *d_columns;
 
     __half *d_weights, *d_weight_mask, *d_values;
 
@@ -133,7 +125,6 @@ int main(int argc, char **argv) {
     CHECK_CUDA( cudaMalloc((void **)&d_new_node_blocks, node_size) );
     CHECK_CUDA( cudaMalloc((void **)&d_node_blocks, node_size) );
     CHECK_CUDA( cudaMalloc((void **)&d_splitters, node_size) );
-    CHECK_CUDA( cudaMalloc((void **)&d_splitters_mask, node_size) );
     CHECK_CUDA( cudaMalloc((void **)&d_current_splitter_index, sizeof(int)) );
     CHECK_CUDA( cudaMalloc((void **)&d_max_node_w, sizeof(int)) );
 
@@ -141,7 +132,6 @@ int main(int argc, char **argv) {
     CHECK_CUDA( cudaMemset(d_new_node_blocks, 0, node_size) );
     CHECK_CUDA( cudaMemset(d_node_blocks, 0, node_size) );
     CHECK_CUDA( cudaMemset(d_splitters, 0, node_size) );
-    CHECK_CUDA( cudaMemset(d_splitters_mask, 0, node_size) );
     CHECK_CUDA( cudaMemset(d_current_splitter_index, 0, sizeof(int)) );
 
     CHECK_CUDA( cudaMemcpy(d_node_n, &node_n, sizeof(int), cudaMemcpyHostToDevice) );
@@ -177,13 +167,9 @@ int main(int argc, char **argv) {
                                  &alpha, adj_mat, vecX, &beta, vecY, CUDA_R_32F,
                                  CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize) )
     CHECK_CUDA( cudaMalloc(&dBuffer, bufferSize) )
-
     while(current_splitter_index >= 0) {
-        compute_weight_mask<<<BLOCK_N, THREAD_N>>>(d_node_n, d_weight_mask, d_node_blocks, d_splitters, d_splitters_mask, d_current_splitter_index);
-        /*CHECK_CUSPARSE( cusparseSpMV_preprocess(
-                             handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
-                             &alpha, adj_mat, vecX, &beta, vecY, CUDA_R_32F,
-                             CUSPARSE_SPMV_ALG_DEFAULT, dBuffer) );*/
+        compute_weight_mask<<<BLOCK_N, THREAD_N>>>(d_node_n, d_weight_mask, d_node_blocks, d_splitters, d_current_splitter_index);
+
         CHECK_CUSPARSE( cusparseSpMV(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
                                  &alpha, adj_mat, vecX, &beta, vecY, CUDA_R_32F,
                                  CUSPARSE_SPMV_ALG_DEFAULT, dBuffer) );
@@ -192,7 +178,7 @@ int main(int argc, char **argv) {
 
         split<<<BLOCK_N, THREAD_N>>>(d_new_node_blocks, d_node_blocks, d_max_node_w, d_weights, d_weight_adv, d_node_n);
 
-        add_splitters<<<BLOCK_N, THREAD_N>>>(d_new_node_blocks, d_node_blocks, d_splitters, d_current_splitter_index, d_splitters_mask, d_node_n);
+        add_splitters<<<BLOCK_N, THREAD_N>>>(d_new_node_blocks, d_node_blocks, d_splitters, d_current_splitter_index, d_node_n);
         CHECK_CUDA( cudaMemcpy(&current_splitter_index, d_current_splitter_index, sizeof(int), cudaMemcpyDeviceToHost) );
         current_splitter_index--;
         CHECK_CUDA( cudaMemcpy(d_current_splitter_index, &current_splitter_index, sizeof(int), cudaMemcpyHostToDevice) );
@@ -321,8 +307,7 @@ int* read_file_graph(int* edge_n, int* node_n, int* max_node_w) {
     for(int i=0; i<(*edge_n); ++i) {
         edge_index[i] = read_file_int(file); 
         edge_index[(*edge_n) + i] = read_file_int(file); 
-        weights[edge_index[i]]++;
-        if(weights[edge_index[i]] > *max_node_w) {
+        weights[edge_index[i]]++; if(weights[edge_index[i]] > *max_node_w) {
             *max_node_w = weights[edge_index[i]];
         }
     }
