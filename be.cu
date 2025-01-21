@@ -38,7 +38,7 @@ typedef struct {
     __half* values;
     int slice_size;
     int sell_values_size;
-    node_connections_t* sorted_nodes;
+    int* node_index_of;
 } sell_data_t;
 
 int nodecmp(const void *p1, const void *p2);
@@ -140,7 +140,6 @@ int main(int argc, char **argv) {
     CHECK_CUDA( cudaMemcpy(d_slice_offsets, sell_data.slice_offsets, (n_slices + 1) * sizeof(int), cudaMemcpyHostToDevice) );
     CHECK_CUDA( cudaMemcpy(d_columns, sell_data.column_indices, sell_data.sell_values_size * sizeof(int), cudaMemcpyHostToDevice) );
 
-
     cusparseHandle_t handle = NULL;
     cusparseSpMatDescr_t adj_mat;
     cusparseDnVecDescr_t vecX, vecY;
@@ -190,9 +189,9 @@ int main(int argc, char **argv) {
     //cudaDeviceSynchronize(); -- Device already synchronized on cudaMemcpy
     int *result = (int*)malloc(node_size);
     CHECK_CUDA( cudaMemcpy(result, d_node_blocks, node_size, cudaMemcpyDeviceToHost) );
-    printf("[%d", result[sell_data.sorted_nodes[0].node]);
+    printf("[%d", result[sell_data.node_index_of[0]]);
     for (int i=1; i<node_n; ++i) {
-        printf(",%d", result[sell_data.sorted_nodes[i].node]);
+        printf(",%d", result[sell_data.node_index_of[i]]);
     }
     printf("]");
     return 0;
@@ -209,34 +208,32 @@ sell_data_t gen_sell(int* edge_index, int edge_n, int node_n, int n_slices) {
     sell_data_t res;
     res.slice_size = ceil((float)node_n / n_slices);
     res.slice_offsets = (int*)calloc(n_slices + 1, sizeof(int));
-    int* node_index_of = (int*)malloc(node_n * sizeof(int));
-    int* connections_n = (int*)calloc(node_n, sizeof(int));
+    res.node_index_of = (int*)malloc(node_n * sizeof(int));
     int* connections_sum = (int*)malloc(node_n * sizeof(int));
     int* connections_strided = (int*)malloc(edge_n * sizeof(int));
     int* connections_cur = (int*)calloc(node_n, sizeof(int));
     int* padding_sizes = (int*)malloc(n_slices * sizeof(int));
-    res.sorted_nodes = (node_connections_t*)malloc(node_n * sizeof(node_connections_t));
+    node_connections_t* sorted_nodes = (node_connections_t*)malloc(node_n * sizeof(node_connections_t));
 
     for(int i =0; i< node_n; ++i) {
-        res.sorted_nodes[i].node = i;
-        res.sorted_nodes[i].n = 0;
+        sorted_nodes[i].node = i;
+        sorted_nodes[i].n = 0;
     }
 
     for(int i=0; i<edge_n; ++i) {
         int node = edge_index[i];
-        connections_n[node]++;
-        res.sorted_nodes[node].n++;
+        sorted_nodes[node].n++;
     }
 
     for(int i=0; i<node_n; ++i) {
-        connections_sum[i] = i ? connections_sum[i-1] + connections_n[i-1] : 0;
+        connections_sum[i] = i ? connections_sum[i-1] + sorted_nodes[i-1].n : 0;
     }
 
-    qsort(res.sorted_nodes, node_n, sizeof(node_connections_t), nodecmp);
+    qsort(sorted_nodes, node_n, sizeof(node_connections_t), nodecmp);
 
     for(int i =0;i<node_n;++i) {
-        node_connections_t c = res.sorted_nodes[i];
-        node_index_of[c.node] = i;
+        node_connections_t c = sorted_nodes[i];
+        res.node_index_of[c.node] = i;
     }
 
     for(int i=0; i<edge_n; ++i) {
@@ -250,7 +247,7 @@ sell_data_t gen_sell(int* edge_index, int edge_n, int node_n, int n_slices) {
         int max_row_len = 0;
         for(int k=0; k<res.slice_size; ++k) {
             int node_index = (i * res.slice_size) + k;
-            int row_len = node_index < node_n ? connections_n[res.sorted_nodes[node_index].node] : 0;
+            int row_len = node_index < node_n ? sorted_nodes[node_index].n : 0;
             max_row_len = max(max_row_len, row_len);
         }
         padding_sizes[i] = max_row_len;
@@ -269,9 +266,9 @@ sell_data_t gen_sell(int* edge_index, int edge_n, int node_n, int n_slices) {
             for(int c=0; c<res.slice_size; ++c) {
                 int node_index = (i * res.slice_size) + c;
                 if(node_index < node_n) { 
-                    int node = res.sorted_nodes[node_index].node;
-                    if (connections_cur[node] < connections_n[node]) {
-                        res.column_indices[values_last] = node_index_of[connections_strided[connections_sum[node] + connections_cur[node]]];
+                    int node = sorted_nodes[node_index].node;
+                    if (connections_cur[node] < sorted_nodes[node_index].n) {
+                        res.column_indices[values_last] = res.node_index_of[connections_strided[connections_sum[node] + connections_cur[node]]];
                         res.values[values_last] = 1.0;
                         connections_cur[node]++;
                     } else {
@@ -287,12 +284,10 @@ sell_data_t gen_sell(int* edge_index, int edge_n, int node_n, int n_slices) {
         }    
     }
 
-    free(connections_n);
     free(connections_sum);
     free(connections_strided);
     free(connections_cur);
     free(padding_sizes);
-    free(node_index_of);
     
     return res;
 }
