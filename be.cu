@@ -76,7 +76,7 @@ __global__ void split(int* new_node_blocks, int* node_blocks, int* max_node_w, _
         int block = node_blocks[i];
         int weight = weights[i];
         int new_block = block;
-        if(weight != ((int)weights[block])) {
+        if(i != block && weight != ((int)weights[block])) {
             long int adv_index = ((long int)*max_node_w) * block + weight;
             new_block = weight_adv[adv_index];
         }
