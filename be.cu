@@ -32,7 +32,7 @@ int read_file_int(FILE *file);
 
 __global__ void compute_weights(int* edge_n, int* edge_start, int* edge_end, int* node_blocks, int* splitters, int* current_splitter_index, int* weights) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if(i < *edge_n) {
+    if(i < (*edge_n)) {
         int csi = *current_splitter_index;
         int splitter = splitters[csi];
         int node = edge_end[i];
@@ -68,13 +68,13 @@ __global__ void split(int* new_node_blocks, int* node_blocks, int* max_node_w, i
             new_block = weight_adv[adv_index];
         }
         new_node_blocks[i] = new_block;
-        weights[i] = 0;
     }
 }
 
-__global__ void add_splitters(int* new_node_blocks, int* node_blocks, int* splitters, int* current_splitter_index, int* node_n) {
+__global__ void add_splitters(int* new_node_blocks, int* weights, int* node_blocks, int* splitters, int* current_splitter_index, int* node_n) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if(i < (*node_n)) {
+        weights[i] = 0;
         int new_node_block = new_node_blocks[i];
         int old_node_block = node_blocks[i];
         if(i == new_node_block && new_node_block != old_node_block) {
@@ -109,6 +109,7 @@ int main(int argc, char **argv) {
     CHECK_CUDA( cudaMalloc((void **)&d_max_node_w, sizeof(int)) );
 
     CHECK_CUDA( cudaMemset(d_weights, 0, node_n * sizeof(int)) );
+    CHECK_CUDA( cudaMemset(d_weight_adv, 0, max_node_w * node_n * sizeof(int)) );
     CHECK_CUDA( cudaMemset(d_new_node_blocks, 0, node_n * sizeof(int)) );
     CHECK_CUDA( cudaMemset(d_node_blocks, 0, node_n * sizeof(int)) );
     CHECK_CUDA( cudaMemset(d_splitters, 0, node_n * sizeof(int)) );
@@ -127,7 +128,7 @@ int main(int argc, char **argv) {
 
         split<<<BLOCK_N, THREAD_N>>>(d_new_node_blocks, d_node_blocks, d_max_node_w, d_weights, d_weight_adv, d_node_n);
 
-        add_splitters<<<BLOCK_N, THREAD_N>>>(d_new_node_blocks, d_node_blocks, d_splitters, d_current_splitter_index, d_node_n);
+        add_splitters<<<BLOCK_N, THREAD_N>>>(d_new_node_blocks, d_weights, d_node_blocks, d_splitters, d_current_splitter_index, d_node_n);
         CHECK_CUDA( cudaMemcpy(&current_splitter_index, d_current_splitter_index, sizeof(int), cudaMemcpyDeviceToHost) );
         current_splitter_index--;
         CHECK_CUDA( cudaMemcpy(d_current_splitter_index, &current_splitter_index, sizeof(int), cudaMemcpyHostToDevice) );
