@@ -30,7 +30,7 @@
 int* read_file_graph(int* edge_n, int* node_n, int* max_node_w);
 int read_file_int(FILE *file);
 
-__global__ void compute_weights(int* edge_n, int* edge_start, int* edge_end, int* node_blocks, int* splitters, int* current_splitter_index, int* weights) {
+__global__ void compute_weights(int* edge_n, int* edge_start, int* edge_end, int* node_blocks, int* splitters, int* current_splitter_index, __half* weights) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if(i < (*edge_n)) {
         int csi = *current_splitter_index;
@@ -45,25 +45,25 @@ __global__ void compute_weights(int* edge_n, int* edge_start, int* edge_end, int
     }
 }
 
-__global__ void block_ballot(int* node_blocks, int* max_node_w, int* weights, int* weight_adv, int* node_n) {
+__global__ void block_ballot(int* node_blocks, int* max_node_w, __half* weights, int* weight_adv, int* node_n) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if(i < (*node_n)) {
         int weight = weights[i];
         int leader = node_blocks[i];
-        if(i != leader && weight != weights[leader]) {
+        if(i != leader && weight != ((int)weights[leader])) {
             long int adv_index = ((long int)*max_node_w) * leader + weight;
             weight_adv[adv_index] = i;
         }
     }
 }
 
-__global__ void split(int* new_node_blocks, int* node_blocks, int* max_node_w, int* weights, int* weight_adv, int* node_n) {
+__global__ void split(int* new_node_blocks, int* node_blocks, int* max_node_w, __half* weights, int* weight_adv, int* node_n) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if(i < (*node_n)) {
         int block = node_blocks[i];
         int weight = weights[i];
         int new_block = block;
-        if(i != block && weight != weights[block]) {
+        if(i != block && weight != ((int)weights[block])) {
             long int adv_index = ((long int)*max_node_w) * block + weight;
             new_block = weight_adv[adv_index];
         }
@@ -71,7 +71,7 @@ __global__ void split(int* new_node_blocks, int* node_blocks, int* max_node_w, i
     }
 }
 
-__global__ void add_splitters(int* new_node_blocks, int* weights, int* node_blocks, int* splitters, int* current_splitter_index, int* node_n) {
+__global__ void add_splitters(int* new_node_blocks, __half* weights, int* node_blocks, int* splitters, int* current_splitter_index, int* node_n) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if(i < (*node_n)) {
         weights[i] = 0;
@@ -94,9 +94,11 @@ int main(int argc, char **argv) {
 
     int *d_node_n, *d_new_node_blocks, *d_node_blocks, *d_current_splitter_index,
         *d_max_node_w, *d_splitters, *d_weight_adv, *d_swap, *d_slice_offsets,
-        *d_columns, *d_weights, *d_edge_start, *d_edge_end, *d_edge_n;
+        *d_columns, *d_edge_start, *d_edge_end, *d_edge_n;
 
-    CHECK_CUDA( cudaMalloc((void **)&d_weights, node_n * sizeof(int)) );
+    __half *d_weights;
+
+    CHECK_CUDA( cudaMalloc((void **)&d_weights, node_n * sizeof(__half)) );
     CHECK_CUDA( cudaMalloc((void **)&d_edge_start, edge_n * sizeof(int)) );
     CHECK_CUDA( cudaMalloc((void **)&d_edge_end, edge_n * sizeof(int)) );
     CHECK_CUDA( cudaMalloc((void **)&d_weight_adv, node_n * sizeof(int) * max_node_w) );
@@ -108,7 +110,7 @@ int main(int argc, char **argv) {
     CHECK_CUDA( cudaMalloc((void **)&d_current_splitter_index, sizeof(int)) );
     CHECK_CUDA( cudaMalloc((void **)&d_max_node_w, sizeof(int)) );
 
-    CHECK_CUDA( cudaMemset(d_weights, 0, node_n * sizeof(int)) );
+    CHECK_CUDA( cudaMemset(d_weights, 0, node_n * sizeof(__half)) );
     CHECK_CUDA( cudaMemset(d_weight_adv, 0, max_node_w * node_n * sizeof(int)) );
     CHECK_CUDA( cudaMemset(d_new_node_blocks, 0, node_n * sizeof(int)) );
     CHECK_CUDA( cudaMemset(d_node_blocks, 0, node_n * sizeof(int)) );
