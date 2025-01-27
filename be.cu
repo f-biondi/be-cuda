@@ -5,7 +5,7 @@
 #include <cuda.h>
 #include <cusparse.h>         
 
-#define THREAD_N 128
+#define THREAD_N 256
 
 #define CHECK_CUDA(func)                                                       \
 {                                                                              \
