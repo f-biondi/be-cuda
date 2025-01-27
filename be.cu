@@ -293,7 +293,7 @@ sell_data_t gen_sell(int* edge_index, int edge_n, int node_n, int n_slices) {
 }
 
 int* read_file_graph(int* edge_n, int* node_n, int* max_node_w) {
-    FILE *file = fopen("graphsell.txt", "r");
+    FILE *file = fopen("graph.txt", "r");
     *node_n = read_file_int(file);
     *edge_n = read_file_int(file);
     int* weights = (int*)calloc(*node_n, sizeof(int));
