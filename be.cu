@@ -1,12 +1,9 @@
 #include <stdlib.h>
-#include <cub/cub.cuh>
 #include <stdio.h>
 #include <math.h>
 #include <cuda_fp16.h>
 #include <cuda.h>
 #include <cusparse.h>
-
-#define WEIGHT_THREAD_N 128
 #define THREAD_N 256
 
 #define CHECK_CUDA(func)                                                       \
@@ -29,33 +26,11 @@
     }                                                                          \
 }
 
-struct CustomSum
-{
-    template <typename T>
-    __device__ __forceinline__
-    T operator()(const T &a, const T &b) const {
-        return a+b;
-    }
-};
-
-typedef struct {
-    int* index;
-} edge_index_t;
-
-edge_index_t read_file_graph(int* edge_n, int* node_n, int* max_degree);
+int* read_file_graph(int* edge_n, int* node_n, int* max_node_w);
 int read_file_int(FILE *file);
 
-__global__ void compute_edge_activation(int* edge_n, unsigned char* edge_activation, int* edge_end, int* splitters, int* current_splitter_index, int* node_blocks) {
-    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if(i < (*edge_n)) {
-        int splitter = splitters[*current_splitter_index];
-        int node = edge_end[i];
-        int block = node == -1 ? -1 : node_blocks[node];
-        edge_activation[i] = block == splitter;
-    }
-}
 
-/*__global__ void compute_weights(int* edge_n, int* edge_start, int* edge_end, int* node_blocks, int* splitters, int* current_splitter_index, __half* weights) {
+__global__ void compute_weights(int* edge_n, int* edge_start, int* edge_end, int* node_blocks, int* splitters, int* current_splitter_index, __half* weights) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if(i < (*edge_n)) {
         int csi = *current_splitter_index;
@@ -68,28 +43,28 @@ __global__ void compute_edge_activation(int* edge_n, unsigned char* edge_activat
             atomicAdd(weights + s, 1);
         }
     }
-}*/
+}
 
-__global__ void block_ballot(int* node_blocks, int* max_degree, __half* weights, int* weight_adv, int* node_n) {
-    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void block_ballot(int* node_blocks, int* max_node_w, __half* weights, int* weight_adv, int* node_n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
     if(i < (*node_n)) {
         int weight = weights[i];
         int leader = node_blocks[i];
         if(i != leader && weight != ((int)weights[leader])) {
-            long int adv_index = ((long int)*max_degree) * leader + weight;
+            long int adv_index = ((long int)*max_node_w) * leader + weight;
             weight_adv[adv_index] = i;
         }
     }
 }
 
-__global__ void split(int* new_node_blocks, int* node_blocks, int* max_degree, __half* weights, int* weight_adv, int* node_n) {
-    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void split(int* new_node_blocks, int* node_blocks, int* max_node_w, __half* weights, int* weight_adv, int* node_n) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
     if(i < (*node_n)) {
         int block = node_blocks[i];
         int weight = weights[i];
         int new_block = block;
         if(i != block && weight != ((int)weights[block])) {
-            long int adv_index = ((long int)*max_degree) * block + weight;
+            long int adv_index = ((long int)*max_node_w) * block + weight;
             new_block = weight_adv[adv_index];
         }
         new_node_blocks[i] = new_block;
@@ -97,7 +72,7 @@ __global__ void split(int* new_node_blocks, int* node_blocks, int* max_degree, _
 }
 
 __global__ void add_splitters(int* new_node_blocks, __half* weights, int* node_blocks, int* splitters, int* current_splitter_index, int* node_n) {
-    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
     if(i < (*node_n)) {
         weights[i] = 0;
         int new_node_block = new_node_blocks[i];
@@ -112,35 +87,31 @@ __global__ void add_splitters(int* new_node_blocks, __half* weights, int* node_b
 int main(int argc, char **argv) {
     int node_n = 0;
     int edge_n = 0;
-    int max_degree = 0;
-    edge_index_t edge_index = read_file_graph(&edge_n, &node_n, &max_degree);
+    int max_node_w = 0;
+    int* edge_index = read_file_graph(&edge_n, &node_n, &max_node_w);
     const int BLOCK_N = (node_n+(THREAD_N-1)) / THREAD_N;
     int current_splitter_index = 0;
-    
+
     int *d_node_n, *d_new_node_blocks, *d_node_blocks, *d_current_splitter_index,
-        *d_max_degree, *d_splitters, *d_weight_adv, *d_swap, *d_edge_start,
-        *d_edge_end, *d_edge_n, *d_unique_out, *d_num_runs_out;
+        *d_max_node_w, *d_splitters, *d_weight_adv, *d_swap, *d_slice_offsets,
+        *d_columns, *d_edge_start, *d_edge_end, *d_edge_n;
 
     __half *d_weights;
-    unsigned char *d_edge_activation;
 
     CHECK_CUDA( cudaMalloc((void **)&d_weights, node_n * sizeof(__half)) );
-    CHECK_CUDA( cudaMalloc((void **)&d_unique_out, node_n * sizeof(int)) );
-    CHECK_CUDA( cudaMalloc((void **)&d_num_runs_out, sizeof(int)) );
-    CHECK_CUDA( cudaMalloc((void **)&d_edge_activation, edge_n * sizeof(unsigned char)) );
     CHECK_CUDA( cudaMalloc((void **)&d_edge_start, edge_n * sizeof(int)) );
     CHECK_CUDA( cudaMalloc((void **)&d_edge_end, edge_n * sizeof(int)) );
-    CHECK_CUDA( cudaMalloc((void **)&d_weight_adv, node_n * sizeof(int) * max_degree) );
+    CHECK_CUDA( cudaMalloc((void **)&d_weight_adv, node_n * sizeof(int) * max_node_w) );
     CHECK_CUDA( cudaMalloc((void **)&d_node_n, sizeof(int)) );
     CHECK_CUDA( cudaMalloc((void **)&d_edge_n, sizeof(int)) );
     CHECK_CUDA( cudaMalloc((void **)&d_new_node_blocks, node_n * sizeof(int)) );
     CHECK_CUDA( cudaMalloc((void **)&d_node_blocks, node_n * sizeof(int)) );
     CHECK_CUDA( cudaMalloc((void **)&d_splitters, node_n * sizeof(int)) );
     CHECK_CUDA( cudaMalloc((void **)&d_current_splitter_index, sizeof(int)) );
-    CHECK_CUDA( cudaMalloc((void **)&d_max_degree, sizeof(int)) );
+    CHECK_CUDA( cudaMalloc((void **)&d_max_node_w, sizeof(int)) );
 
     CHECK_CUDA( cudaMemset(d_weights, 0, node_n * sizeof(__half)) );
-    CHECK_CUDA( cudaMemset(d_weight_adv, 0, max_degree * node_n * sizeof(int)) );
+    CHECK_CUDA( cudaMemset(d_weight_adv, 0, max_node_w * node_n * sizeof(int)) );
     CHECK_CUDA( cudaMemset(d_new_node_blocks, 0, node_n * sizeof(int)) );
     CHECK_CUDA( cudaMemset(d_node_blocks, 0, node_n * sizeof(int)) );
     CHECK_CUDA( cudaMemset(d_splitters, 0, node_n * sizeof(int)) );
@@ -148,38 +119,19 @@ int main(int argc, char **argv) {
 
     CHECK_CUDA( cudaMemcpy(d_node_n, &node_n, sizeof(int), cudaMemcpyHostToDevice) );
     CHECK_CUDA( cudaMemcpy(d_edge_n, &edge_n, sizeof(int), cudaMemcpyHostToDevice) );
-    CHECK_CUDA( cudaMemcpy(d_edge_start, edge_index.index, sizeof(int) * edge_n, cudaMemcpyHostToDevice) );
-    CHECK_CUDA( cudaMemcpy(d_edge_end, edge_index.index + edge_n, sizeof(int) * edge_n, cudaMemcpyHostToDevice) );
-
-    CHECK_CUDA( cudaMemcpy(d_max_degree, &max_degree, sizeof(int), cudaMemcpyHostToDevice) );
-
-    CustomSum    reduction_op;
-    void     *d_temp_storage = nullptr;
-    size_t   temp_storage_bytes = 0;
-    cub::DeviceReduce::ReduceByKey(
-      d_temp_storage, temp_storage_bytes,
-      d_edge_start, d_unique_out, d_edge_activation,
-      d_weights, d_num_runs_out, reduction_op, edge_n);
-
-    // Allocate temporary storage
-    cudaMalloc(&d_temp_storage, temp_storage_bytes);
+    CHECK_CUDA( cudaMemcpy(d_edge_start, edge_index, edge_n * sizeof(int), cudaMemcpyHostToDevice) );
+    CHECK_CUDA( cudaMemcpy(d_edge_end, edge_index + edge_n, edge_n * sizeof(int), cudaMemcpyHostToDevice) );
+    CHECK_CUDA( cudaMemcpy(d_max_node_w, &max_node_w, sizeof(int), cudaMemcpyHostToDevice) );
 
     while(current_splitter_index >= 0) {
-        compute_edge_activation<<<(edge_n+(THREAD_N-1)) / THREAD_N, THREAD_N>>>(d_edge_n, d_edge_activation, d_edge_end, d_splitters, d_current_splitter_index, d_node_blocks);
-        //compute_weights<<<(edge_n+(THREAD_N-1)) / THREAD_N, THREAD_N>>>(d_edge_n, d_edge_start, d_edge_end, d_node_blocks, d_splitters, d_current_splitter_index, d_weights);
-        
-        cub::DeviceReduce::ReduceByKey(
-          d_temp_storage, temp_storage_bytes,
-          d_edge_start, d_unique_out, d_edge_activation,
-          d_weights, d_num_runs_out, reduction_op, edge_n);
+        compute_weights<<<(edge_n+(THREAD_N-1)) / THREAD_N, THREAD_N>>>(d_edge_n, d_edge_start, d_edge_end, d_node_blocks, d_splitters, d_current_splitter_index, d_weights);
 
+        block_ballot<<<BLOCK_N, THREAD_N>>>(d_node_blocks, d_max_node_w, d_weights, d_weight_adv, d_node_n);
+        cudaDeviceSynchronize();
 
-        block_ballot<<<BLOCK_N, THREAD_N>>>(d_node_blocks, d_max_degree, d_weights, d_weight_adv, d_node_n);
-
-        split<<<BLOCK_N, THREAD_N>>>(d_new_node_blocks, d_node_blocks, d_max_degree, d_weights, d_weight_adv, d_node_n);
+        split<<<BLOCK_N, THREAD_N>>>(d_new_node_blocks, d_node_blocks, d_max_node_w, d_weights, d_weight_adv, d_node_n);
 
         add_splitters<<<BLOCK_N, THREAD_N>>>(d_new_node_blocks, d_weights, d_node_blocks, d_splitters, d_current_splitter_index, d_node_n);
-
         CHECK_CUDA( cudaMemcpy(&current_splitter_index, d_current_splitter_index, sizeof(int), cudaMemcpyDeviceToHost) );
         current_splitter_index--;
         CHECK_CUDA( cudaMemcpy(d_current_splitter_index, &current_splitter_index, sizeof(int), cudaMemcpyHostToDevice) );
@@ -188,6 +140,7 @@ int main(int argc, char **argv) {
         d_node_blocks = d_new_node_blocks;
         d_new_node_blocks = d_swap;
     }
+    //cudaDeviceSynchronize(); -- Device already synchronized on cudaMemcpy
     int *result = (int*)malloc(node_n * sizeof(int));
     CHECK_CUDA( cudaMemcpy(result, d_node_blocks, node_n * sizeof(int), cudaMemcpyDeviceToHost) );
     printf("[%d", result[0]);
@@ -198,39 +151,32 @@ int main(int argc, char **argv) {
     return 0;
 }
 
-edge_index_t read_file_graph(int* edge_n, int* node_n, int* max_degree) {
+int* read_file_graph(int* edge_n, int* node_n, int* max_node_w) {
     FILE *file = fopen("graph.txt", "r");
     *node_n = read_file_int(file);
     *edge_n = read_file_int(file);
-    edge_index_t res;
-    int* degrees = (int*)calloc(*node_n, sizeof(int));
-    res.index = (int*)malloc(((size_t)*edge_n) * 2 * sizeof(int));
-
+    int* weights = (int*)calloc(*node_n, sizeof(int));
+    size_t index_size = (*edge_n) * 2 * sizeof(int);
+    int *edge_index = (int*)malloc(index_size);
     for(int i=0; i<(*edge_n); ++i) {
-        res.index[i] = read_file_int(file); 
-        res.index[(*edge_n) + i] = read_file_int(file); 
-        degrees[res.index[i]]++;
-        if(degrees[res.index[i]] > *max_degree) {
-            *max_degree = degrees[res.index[i]];
+        edge_index[i] = read_file_int(file);
+        edge_index[(*edge_n) + i] = read_file_int(file);
+        weights[edge_index[i]]++; if(weights[edge_index[i]] > *max_node_w) {
+            *max_node_w = weights[edge_index[i]];
         }
     }
-    free(degrees);
-    return res;
+    free(weights);
+    return edge_index;
 }
 
 int read_file_int(FILE *file) {
+    char ch = fgetc(file);
     int n = 0;
     int c = 0;
-    int sign = 1;
-    char ch = fgetc(file);
-    if(ch == '-') {
-        sign = -1;
-        ch = fgetc(file);
-    }
     while(ch != ' ' && ch != '\n') {
         c = ch - '0';
         n = (n*10) + c;
         ch = fgetc(file);
     }
-    return n * sign;
+    return n;
 }
