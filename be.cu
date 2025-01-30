@@ -3,7 +3,6 @@
 #include <math.h>
 #include <cuda_fp16.h>
 #include <cuda.h>
-#include <cusparse.h>
 #define THREAD_N 256
 
 #define CHECK_CUDA(func)                                                       \
@@ -16,17 +15,14 @@
     }                                                                          \
 }
 
-#define CHECK_CUSPARSE(func)                                                   \
-{                                                                              \
-    cusparseStatus_t status = (func);                                          \
-    if (status != CUSPARSE_STATUS_SUCCESS) {                                   \
-        printf("CUSPARSE API failed at line %d with error: %s (%d)\n",         \
-               __LINE__, cusparseGetErrorString(status), status);              \
-        return EXIT_FAILURE;                                                   \
-    }                                                                          \
-}
+typedef struct {
+    int* node_blocks;
+    int* splitters;
+    int current_splitter_index;
+} partition_t;
 
 int* read_file_graph(int* edge_n, int* node_n, int* max_node_w);
+partition_t read_file_partition(int node_n);
 int read_file_int(FILE *file);
 
 
@@ -89,12 +85,13 @@ int main(int argc, char **argv) {
     int edge_n = 0;
     int max_node_w = 0;
     int* edge_index = read_file_graph(&edge_n, &node_n, &max_node_w);
-    const int BLOCK_N = (node_n+(THREAD_N-1)) / THREAD_N;
-    int current_splitter_index = 0;
+    partition_t partition = read_file_partition(node_n);
+    const int NODE_BLOCK_N = (node_n+(THREAD_N-1)) / THREAD_N;
+    const int EDGE_BLOCK_N = (edge_n+(THREAD_N-1)) / THREAD_N;
 
     int *d_node_n, *d_new_node_blocks, *d_node_blocks, *d_current_splitter_index,
-        *d_max_node_w, *d_splitters, *d_weight_adv, *d_swap, *d_slice_offsets,
-        *d_columns, *d_edge_start, *d_edge_end, *d_edge_n;
+        *d_max_node_w, *d_splitters, *d_weight_adv, *d_swap, *d_edge_start,
+        *d_edge_end, *d_edge_n;
 
     __half *d_weights;
 
@@ -112,40 +109,38 @@ int main(int argc, char **argv) {
 
     CHECK_CUDA( cudaMemset(d_weights, 0, node_n * sizeof(__half)) );
     CHECK_CUDA( cudaMemset(d_weight_adv, 0, max_node_w * node_n * sizeof(int)) );
-    CHECK_CUDA( cudaMemset(d_new_node_blocks, 0, node_n * sizeof(int)) );
-    CHECK_CUDA( cudaMemset(d_node_blocks, 0, node_n * sizeof(int)) );
-    CHECK_CUDA( cudaMemset(d_splitters, 0, node_n * sizeof(int)) );
-    CHECK_CUDA( cudaMemset(d_current_splitter_index, 0, sizeof(int)) );
 
     CHECK_CUDA( cudaMemcpy(d_node_n, &node_n, sizeof(int), cudaMemcpyHostToDevice) );
     CHECK_CUDA( cudaMemcpy(d_edge_n, &edge_n, sizeof(int), cudaMemcpyHostToDevice) );
     CHECK_CUDA( cudaMemcpy(d_edge_start, edge_index, edge_n * sizeof(int), cudaMemcpyHostToDevice) );
     CHECK_CUDA( cudaMemcpy(d_edge_end, edge_index + edge_n, edge_n * sizeof(int), cudaMemcpyHostToDevice) );
+    CHECK_CUDA( cudaMemcpy(d_node_blocks, partition.node_blocks, node_n * sizeof(int), cudaMemcpyHostToDevice) );
+    CHECK_CUDA( cudaMemcpy(d_new_node_blocks, partition.node_blocks, node_n * sizeof(int), cudaMemcpyHostToDevice) );
+    CHECK_CUDA( cudaMemcpy(d_splitters, partition.splitters, node_n * sizeof(int), cudaMemcpyHostToDevice) );
     CHECK_CUDA( cudaMemcpy(d_max_node_w, &max_node_w, sizeof(int), cudaMemcpyHostToDevice) );
+    CHECK_CUDA( cudaMemcpy(d_current_splitter_index, &partition.current_splitter_index, sizeof(int), cudaMemcpyHostToDevice) );
 
-    while(current_splitter_index >= 0) {
-        compute_weights<<<(edge_n+(THREAD_N-1)) / THREAD_N, THREAD_N>>>(d_edge_n, d_edge_start, d_edge_end, d_node_blocks, d_splitters, d_current_splitter_index, d_weights);
+    while(partition.current_splitter_index >= 0) {
+        compute_weights<<<EDGE_BLOCK_N, THREAD_N>>>(d_edge_n, d_edge_start, d_edge_end, d_node_blocks, d_splitters, d_current_splitter_index, d_weights);
 
-        block_ballot<<<BLOCK_N, THREAD_N>>>(d_node_blocks, d_max_node_w, d_weights, d_weight_adv, d_node_n);
-        cudaDeviceSynchronize();
+        block_ballot<<<NODE_BLOCK_N, THREAD_N>>>(d_node_blocks, d_max_node_w, d_weights, d_weight_adv, d_node_n);
 
-        split<<<BLOCK_N, THREAD_N>>>(d_new_node_blocks, d_node_blocks, d_max_node_w, d_weights, d_weight_adv, d_node_n);
+        split<<<NODE_BLOCK_N, THREAD_N>>>(d_new_node_blocks, d_node_blocks, d_max_node_w, d_weights, d_weight_adv, d_node_n);
 
-        add_splitters<<<BLOCK_N, THREAD_N>>>(d_new_node_blocks, d_weights, d_node_blocks, d_splitters, d_current_splitter_index, d_node_n);
-        CHECK_CUDA( cudaMemcpy(&current_splitter_index, d_current_splitter_index, sizeof(int), cudaMemcpyDeviceToHost) );
-        current_splitter_index--;
-        CHECK_CUDA( cudaMemcpy(d_current_splitter_index, &current_splitter_index, sizeof(int), cudaMemcpyHostToDevice) );
+        add_splitters<<<NODE_BLOCK_N, THREAD_N>>>(d_new_node_blocks, d_weights, d_node_blocks, d_splitters, d_current_splitter_index, d_node_n);
+        CHECK_CUDA( cudaMemcpy(&partition.current_splitter_index, d_current_splitter_index, sizeof(int), cudaMemcpyDeviceToHost) );
+        partition.current_splitter_index--;
+        CHECK_CUDA( cudaMemcpy(d_current_splitter_index, &partition.current_splitter_index, sizeof(int), cudaMemcpyHostToDevice) );
 
         d_swap = d_node_blocks;
         d_node_blocks = d_new_node_blocks;
         d_new_node_blocks = d_swap;
     }
     //cudaDeviceSynchronize(); -- Device already synchronized on cudaMemcpy
-    int *result = (int*)malloc(node_n * sizeof(int));
-    CHECK_CUDA( cudaMemcpy(result, d_node_blocks, node_n * sizeof(int), cudaMemcpyDeviceToHost) );
-    printf("[%d", result[0]);
+    CHECK_CUDA( cudaMemcpy(partition.node_blocks, d_node_blocks, node_n * sizeof(int), cudaMemcpyDeviceToHost) );
+    printf("[%d", partition.node_blocks[0]);
     for (int i=1; i<node_n; ++i) {
-        printf(",%d", result[i]);
+        printf(",%d", partition.node_blocks[i]);
     }
     printf("]");
     return 0;
@@ -165,8 +160,27 @@ int* read_file_graph(int* edge_n, int* node_n, int* max_node_w) {
             *max_node_w = weights[edge_index[i]];
         }
     }
+    fclose(file);
     free(weights);
     return edge_index;
+}
+
+partition_t read_file_partition(int node_n) {
+    FILE *file = fopen("partition.txt", "r");
+    partition_t partition;
+    partition.node_blocks = (int*)malloc(sizeof(int) * node_n);
+    partition.splitters = (int*)malloc(sizeof(int) * node_n);
+    partition.current_splitter_index = -1;
+
+    for(int i=0; i<node_n; ++i) {
+        int nb = read_file_int(file);
+        if(nb == i) {
+            partition.splitters[++partition.current_splitter_index] = nb;
+        }
+        partition.node_blocks[i] = nb;
+    }
+    fclose(file);
+    return partition;
 }
 
 int read_file_int(FILE *file) {
