@@ -156,7 +156,8 @@ int* read_file_graph(int* edge_n, int* node_n, int* max_node_w) {
     for(int i=0; i<(*edge_n); ++i) {
         edge_index[i] = read_file_int(file);
         edge_index[(*edge_n) + i] = read_file_int(file);
-        weights[edge_index[i]]++; if(weights[edge_index[i]] > *max_node_w) {
+        weights[edge_index[i]]++; 
+        if(weights[edge_index[i]] > *max_node_w) {
             *max_node_w = weights[edge_index[i]];
         }
     }
