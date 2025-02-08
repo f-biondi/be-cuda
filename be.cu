@@ -33,9 +33,9 @@ __global__ void compute_weights(int* edge_n, int* edge_start, int* edge_end, int
         int splitter = splitters[csi];
         int node = edge_end[i];
         int block = node_blocks[node];
-        int s = edge_start[i];
 
         if(block == splitter) {
+            int s = edge_start[i];
             atomicAdd(weights + s, 1);
         }
     }
