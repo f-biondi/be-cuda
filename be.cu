@@ -27,15 +27,15 @@ int read_file_int(FILE *file);
 
 
 __global__ void compute_weights(int* edge_n, int* edge_start, int* edge_end, int* node_blocks, int* splitters, int* current_splitter_index, __half* weights) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if(i < (*edge_n)) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if(i < ((unsigned int)*edge_n)) {
         int csi = *current_splitter_index;
         int splitter = splitters[csi];
         int node = edge_end[i];
         int block = node_blocks[node];
+        int s = edge_start[i];
 
         if(block == splitter) {
-            int s = edge_start[i];
             atomicAdd(weights + s, 1);
         }
     }
@@ -81,8 +81,8 @@ __global__ void add_splitters(int* new_node_blocks, __half* weights, int* node_b
 }
 
 int main(int argc, char **argv) {
-    int node_n = 0;
-    int edge_n = 0;
+    unsigned int node_n = 0;
+    unsigned int edge_n = 0;
     int max_node_w = 0;
     int* edge_index = read_file_graph(&edge_n, &node_n, &max_node_w);
     partition_t partition = read_file_partition(node_n);
@@ -96,15 +96,15 @@ int main(int argc, char **argv) {
     __half *d_weights;
 
     CHECK_CUDA( cudaMalloc((void **)&d_weights, node_n * sizeof(__half)) );
-    CHECK_CUDA( cudaMalloc((void **)&d_edge_start, edge_n * sizeof(int)) );
-    CHECK_CUDA( cudaMalloc((void **)&d_edge_end, edge_n * sizeof(int)) );
+    CHECK_CUDA( cudaMalloc((void **)&d_edge_start, ((size_t)edge_n) * sizeof(int)) );
+    CHECK_CUDA( cudaMalloc((void **)&d_edge_end, ((size_t)edge_n) * sizeof(int)) );
     CHECK_CUDA( cudaMalloc((void **)&d_weight_adv, node_n * sizeof(int) * max_node_w) );
     CHECK_CUDA( cudaMalloc((void **)&d_node_n, sizeof(int)) );
     CHECK_CUDA( cudaMalloc((void **)&d_edge_n, sizeof(int)) );
     CHECK_CUDA( cudaMalloc((void **)&d_new_node_blocks, node_n * sizeof(int)) );
     CHECK_CUDA( cudaMalloc((void **)&d_node_blocks, node_n * sizeof(int)) );
     CHECK_CUDA( cudaMalloc((void **)&d_splitters, node_n * sizeof(int)) );
-    CHECK_CUDA( cudaMalloc((void **)&d_current_splitter_index, sizeof(int)) );
+    CHECK_CUDA( cudaMallocHost((void **)&d_current_splitter_index, sizeof(int)) );
     CHECK_CUDA( cudaMalloc((void **)&d_max_node_w, sizeof(int)) );
 
     CHECK_CUDA( cudaMemset(d_weights, 0, node_n * sizeof(__half)) );
@@ -112,8 +112,8 @@ int main(int argc, char **argv) {
 
     CHECK_CUDA( cudaMemcpy(d_node_n, &node_n, sizeof(int), cudaMemcpyHostToDevice) );
     CHECK_CUDA( cudaMemcpy(d_edge_n, &edge_n, sizeof(int), cudaMemcpyHostToDevice) );
-    CHECK_CUDA( cudaMemcpy(d_edge_start, edge_index, edge_n * sizeof(int), cudaMemcpyHostToDevice) );
-    CHECK_CUDA( cudaMemcpy(d_edge_end, edge_index + edge_n, edge_n * sizeof(int), cudaMemcpyHostToDevice) );
+    CHECK_CUDA( cudaMemcpy(d_edge_start, edge_index, ((size_t)edge_n) * sizeof(int), cudaMemcpyHostToDevice) );
+    CHECK_CUDA( cudaMemcpy(d_edge_end, edge_index + edge_n, ((size_t)edge_n) * sizeof(int), cudaMemcpyHostToDevice) );
     CHECK_CUDA( cudaMemcpy(d_node_blocks, partition.node_blocks, node_n * sizeof(int), cudaMemcpyHostToDevice) );
     CHECK_CUDA( cudaMemcpy(d_new_node_blocks, partition.node_blocks, node_n * sizeof(int), cudaMemcpyHostToDevice) );
     CHECK_CUDA( cudaMemcpy(d_splitters, partition.splitters, node_n * sizeof(int), cudaMemcpyHostToDevice) );
@@ -153,10 +153,10 @@ int* read_file_graph(int* edge_n, int* node_n, int* max_node_w) {
     int* weights = (int*)calloc(*node_n, sizeof(int));
     size_t index_size = ((size_t)*edge_n) * 2 * sizeof(int);
     int *edge_index = (int*)malloc(index_size);
-    for(int i=0; i<(*edge_n); ++i) {
+    for(size_t i=0; i<((size_t)*edge_n); ++i) {
         edge_index[i] = read_file_int(file);
-        edge_index[(*edge_n) + i] = read_file_int(file);
-        weights[edge_index[i]]++; 
+        edge_index[((size_t)*edge_n) + i] = read_file_int(file);
+        weights[edge_index[i]]++;
         if(weights[edge_index[i]] > *max_node_w) {
             *max_node_w = weights[edge_index[i]];
         }
