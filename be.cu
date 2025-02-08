@@ -21,14 +21,14 @@ typedef struct {
     int current_splitter_index;
 } partition_t;
 
-int* read_file_graph(int* edge_n, int* node_n, int* max_node_w);
+int* read_file_graph(unsigned int* edge_n, unsigned int* node_n, int* max_node_w);
 partition_t read_file_partition(int node_n);
 int read_file_int(FILE *file);
 
 
-__global__ void compute_weights(int* edge_n, int* edge_start, int* edge_end, int* node_blocks, int* splitters, int* current_splitter_index, __half* weights) {
+__global__ void compute_weights(unsigned int* edge_n, int* edge_start, int* edge_end, int* node_blocks, int* splitters, int* current_splitter_index, __half* weights) {
     unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if(i < ((unsigned int)*edge_n)) {
+    if(i < (*edge_n)) {
         int csi = *current_splitter_index;
         int splitter = splitters[csi];
         int node = edge_end[i];
@@ -41,8 +41,8 @@ __global__ void compute_weights(int* edge_n, int* edge_start, int* edge_end, int
     }
 }
 
-__global__ void block_ballot(int* node_blocks, int* max_node_w, __half* weights, int* weight_adv, int* node_n) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void block_ballot(int* node_blocks, int* max_node_w, __half* weights, int* weight_adv, unsigned int* node_n) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
     if(i < (*node_n)) {
         int weight = weights[i];
         int leader = node_blocks[i];
@@ -53,8 +53,8 @@ __global__ void block_ballot(int* node_blocks, int* max_node_w, __half* weights,
     }
 }
 
-__global__ void split(int* new_node_blocks, int* node_blocks, int* max_node_w, __half* weights, int* weight_adv, int* node_n) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void split(int* new_node_blocks, int* node_blocks, int* max_node_w, __half* weights, int* weight_adv, unsigned int* node_n) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
     if(i < (*node_n)) {
         int block = node_blocks[i];
         int weight = weights[i];
@@ -67,8 +67,8 @@ __global__ void split(int* new_node_blocks, int* node_blocks, int* max_node_w, _
     }
 }
 
-__global__ void add_splitters(int* new_node_blocks, __half* weights, int* node_blocks, int* splitters, int* current_splitter_index, int* node_n) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void add_splitters(int* new_node_blocks, __half* weights, int* node_blocks, int* splitters, int* current_splitter_index, unsigned int* node_n) {
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
     if(i < (*node_n)) {
         weights[i] = 0;
         int new_node_block = new_node_blocks[i];
@@ -89,9 +89,10 @@ int main(int argc, char **argv) {
     const int NODE_BLOCK_N = (node_n+(THREAD_N-1)) / THREAD_N;
     const int EDGE_BLOCK_N = (edge_n+(THREAD_N-1)) / THREAD_N;
 
-    int *d_node_n, *d_new_node_blocks, *d_node_blocks, *d_current_splitter_index,
+    int  *d_new_node_blocks, *d_node_blocks, *d_current_splitter_index,
         *d_max_node_w, *d_splitters, *d_weight_adv, *d_swap, *d_edge_start,
         *d_edge_end, *d_edge_n;
+    unsigned int *d_node_n, *d_edge_n;
 
     __half *d_weights;
 
@@ -99,8 +100,8 @@ int main(int argc, char **argv) {
     CHECK_CUDA( cudaMalloc((void **)&d_edge_start, ((size_t)edge_n) * sizeof(int)) );
     CHECK_CUDA( cudaMalloc((void **)&d_edge_end, ((size_t)edge_n) * sizeof(int)) );
     CHECK_CUDA( cudaMalloc((void **)&d_weight_adv, node_n * sizeof(int) * max_node_w) );
-    CHECK_CUDA( cudaMalloc((void **)&d_node_n, sizeof(int)) );
-    CHECK_CUDA( cudaMalloc((void **)&d_edge_n, sizeof(int)) );
+    CHECK_CUDA( cudaMalloc((void **)&d_node_n, sizeof(unsigned int)) );
+    CHECK_CUDA( cudaMalloc((void **)&d_edge_n, sizeof(unsigned int)) );
     CHECK_CUDA( cudaMalloc((void **)&d_new_node_blocks, node_n * sizeof(int)) );
     CHECK_CUDA( cudaMalloc((void **)&d_node_blocks, node_n * sizeof(int)) );
     CHECK_CUDA( cudaMalloc((void **)&d_splitters, node_n * sizeof(int)) );
@@ -110,8 +111,8 @@ int main(int argc, char **argv) {
     CHECK_CUDA( cudaMemset(d_weights, 0, node_n * sizeof(__half)) );
     CHECK_CUDA( cudaMemset(d_weight_adv, 0, max_node_w * node_n * sizeof(int)) );
 
-    CHECK_CUDA( cudaMemcpy(d_node_n, &node_n, sizeof(int), cudaMemcpyHostToDevice) );
-    CHECK_CUDA( cudaMemcpy(d_edge_n, &edge_n, sizeof(int), cudaMemcpyHostToDevice) );
+    CHECK_CUDA( cudaMemcpy(d_node_n, &node_n, sizeof(unsigned int), cudaMemcpyHostToDevice) );
+    CHECK_CUDA( cudaMemcpy(d_edge_n, &edge_n, sizeof(unsigned int), cudaMemcpyHostToDevice) );
     CHECK_CUDA( cudaMemcpy(d_edge_start, edge_index, ((size_t)edge_n) * sizeof(int), cudaMemcpyHostToDevice) );
     CHECK_CUDA( cudaMemcpy(d_edge_end, edge_index + edge_n, ((size_t)edge_n) * sizeof(int), cudaMemcpyHostToDevice) );
     CHECK_CUDA( cudaMemcpy(d_node_blocks, partition.node_blocks, node_n * sizeof(int), cudaMemcpyHostToDevice) );
