@@ -91,7 +91,7 @@ int main(int argc, char **argv) {
 
     int  *d_new_node_blocks, *d_node_blocks, *d_current_splitter_index,
         *d_max_node_w, *d_splitters, *d_weight_adv, *d_swap, *d_edge_start,
-        *d_edge_end, *d_edge_n;
+        *d_edge_end;
     unsigned int *d_node_n, *d_edge_n;
 
     __half *d_weights;
@@ -147,16 +147,16 @@ int main(int argc, char **argv) {
     return 0;
 }
 
-int* read_file_graph(int* edge_n, int* node_n, int* max_node_w) {
+int* read_file_graph(unsigned int* edge_n, unsigned int* node_n, int* max_node_w) {
     FILE *file = fopen("graph.txt", "r");
     *node_n = read_file_int(file);
     *edge_n = read_file_int(file);
     int* weights = (int*)calloc(*node_n, sizeof(int));
     size_t index_size = ((size_t)*edge_n) * 2 * sizeof(int);
     int *edge_index = (int*)malloc(index_size);
-    for(size_t i=0; i<((size_t)*edge_n); ++i) {
+    for(unsigned int i=0; i<(*edge_n); ++i) {
         edge_index[i] = read_file_int(file);
-        edge_index[((size_t)*edge_n) + i] = read_file_int(file);
+        edge_index[(*edge_n) + i] = read_file_int(file);
         weights[edge_index[i]]++;
         if(weights[edge_index[i]] > *max_node_w) {
             *max_node_w = weights[edge_index[i]];
